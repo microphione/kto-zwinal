@@ -282,8 +282,10 @@ Estimate: P50 20 min, P80 40 min. **Requires user consent** (create repo, commit
 Estimate: P50 1 h, P80 1.5 h. Agents: two-flow verification of the whole app (logic re-run + UI). Depends on: stage 6.
 
 - [x] Test suite green; two-flow report reconciled; corrections applied (re-verification below).
-- [ ] User plays on a phone; feedback recorded here — `BLOCKED`: needs the owner's consent to commit and push
-  (GitHub Pages serves the last commit), then the owner's phone test.
+- [x] Deployed on owner request (2026-10-31): commit `0a00366` pushed to `main`, Pages build `built`; live E2E on
+  https://microphione.github.io/kto-zwinal/ (tutorial + hints, wrong-hero hint, daily case, service worker, offline,
+  random/expert cases, save/continue) all OK, 0 console errors.
+- [ ] User plays on a phone; feedback recorded here.
 
 Two-flow verification (workflow `verify-stage7-final`, 9 agents, 2026-10-31): 0 BLOCKER. Logic PASS —
 soundness of every technique vs the independent reference (3000 small + 600 large differential cases,
