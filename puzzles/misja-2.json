@@ -1,0 +1,187 @@
+{
+ "version": 1,
+ "seed": "misja-2",
+ "difficulty": "medium",
+ "n": 6,
+ "cells": [
+  [
+   "bush",
+   "ground",
+   "rock",
+   "pad",
+   "ground",
+   "safe"
+  ],
+  [
+   "rock",
+   "ground",
+   "crate",
+   "ground",
+   "ground",
+   "ground"
+  ],
+  [
+   "crate",
+   "ground",
+   "ground",
+   "ground",
+   "ground",
+   "barrel"
+  ],
+  [
+   "ground",
+   "pad",
+   "ground",
+   "ground",
+   "ground",
+   "ground"
+  ],
+  [
+   "ground",
+   "ground",
+   "ground",
+   "ground",
+   "ground",
+   "ground"
+  ],
+  [
+   "ground",
+   "bush",
+   "ground",
+   "rock",
+   "ground",
+   "bush"
+  ]
+ ],
+ "zones": [
+  [
+   1,
+   1,
+   2,
+   2,
+   2,
+   2
+  ],
+  [
+   1,
+   2,
+   2,
+   0,
+   2,
+   2
+  ],
+  [
+   1,
+   2,
+   0,
+   0,
+   0,
+   0
+  ],
+  [
+   3,
+   3,
+   0,
+   0,
+   0,
+   0
+  ],
+  [
+   3,
+   3,
+   3,
+   0,
+   0,
+   0
+  ],
+  [
+   3,
+   3,
+   3,
+   3,
+   3,
+   3
+  ]
+ ],
+ "zoneNames": [
+  "Baza",
+  "Kanion",
+  "Wulkan",
+  "Plaża"
+ ],
+ "heroes": [
+  {
+   "name": "Grot",
+   "gen": "Grota",
+   "gender": "m"
+  },
+  {
+   "name": "Bobo",
+   "gen": "Bobo",
+   "gender": "m"
+  },
+  {
+   "name": "Zyg",
+   "gen": "Zyga",
+   "gender": "m"
+  },
+  {
+   "name": "Mira",
+   "gen": "Miry",
+   "gender": "f"
+  },
+  {
+   "name": "Tesa",
+   "gen": "Tesy",
+   "gender": "f"
+  }
+ ],
+ "statements": [
+  {
+   "type": "inZone",
+   "zone": 0,
+   "who": 0
+  },
+  {
+   "type": "row",
+   "n": 5,
+   "who": 0
+  },
+  {
+   "type": "on",
+   "cellType": "bush",
+   "who": 1
+  },
+  {
+   "type": "southOf",
+   "who": 1,
+   "hero": 4
+  },
+  {
+   "type": "sees",
+   "cellType": "barrel",
+   "who": 2
+  },
+  {
+   "type": "nextTo",
+   "cellType": "crate",
+   "who": 3
+  },
+  {
+   "type": "drone",
+   "side": "E",
+   "index": 2,
+   "n": 0
+  }
+ ],
+ "solution": [
+  27,
+  35,
+  14,
+  7,
+  4
+ ],
+ "thief": 4,
+ "id": "misja-2",
+ "title": "Akcja w bazie"
+}

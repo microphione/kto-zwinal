@@ -26,7 +26,8 @@ function maskOf(cells) {
 }
 
 // `rng` (optional) randomises the cell order, used by the generator to sample diverse solutions.
-export function solve(puzzle, limit = 2, rng = null) {
+// `maxNodes` bounds the search; `aborted: true` means the result is incomplete (proves nothing).
+export function solve(puzzle, limit = 2, rng = null, maxNodes = Infinity) {
   const board = getBoard(puzzle);
   const { size } = board;
   const k = puzzle.heroes.length;
@@ -76,6 +77,7 @@ export function solve(puzzle, limit = 2, rng = null) {
   const assigned = new Array(k).fill(-1);
   const solutions = [];
   let nodes = 0;
+  let aborted = false;
 
   const countIn = (lo, hi, dLo, dHi) => {
     let have = 0, could = 0;
@@ -141,7 +143,7 @@ export function solve(puzzle, limit = 2, rng = null) {
     }
     const order = cellsOf(dLo[h], dHi[h]);
     for (const x of rng ? rng.shuffle(order) : order) {
-      nodes++;
+      if (++nodes > maxNodes) { aborted = true; return; }
       const z = board.zone[x];
       if (alone[h] && assigned.some((y, g) => g !== h && y >= 0 && board.zone[y] === z)) continue;
       assigned[h] = x;
@@ -159,12 +161,12 @@ export function solve(puzzle, limit = 2, rng = null) {
       }
       if (ok && revise(nLo, nHi) && feasible(nLo, nHi)) search(nLo, nHi);
       assigned[h] = -1;
-      if (solutions.length >= limit) return;
+      if (solutions.length >= limit || aborted) return;
     }
   };
 
   if (feasible(domLo, domHi)) search(domLo, domHi);
-  return { solutions, nodes };
+  return { solutions, nodes, aborted };
 }
 
 export function countSolutions(puzzle, limit = 2) {

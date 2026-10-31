@@ -64,3 +64,41 @@ test('large boards (6×6–8×8, high mask word): solver and evaluators match th
     assert.deepEqual(sortPlacements(solve(p, Infinity).solutions), sortPlacements(refSolve(p)), `large board ${seed}`);
   }
 });
+
+test('solve honours limit; budgeted searches are either aborted or identical to the full search', () => {
+  for (let seed = 0; seed < 200; seed++) {
+    const { rng, puzzle } = randomBoardPuzzle(seed + 20000);
+    const p = { ...puzzle, statements: Array.from({ length: rng.int(0, 2) }, () => randomStatement(rng, puzzle)) };
+    const full = solve(p, Infinity);
+    for (const limit of [1, 2, 5]) {
+      const r = solve(p, limit);
+      assert.equal(r.solutions.length, Math.min(limit, full.solutions.length));
+      assert.equal(r.aborted, false);
+    }
+    const budget = solve(p, Infinity, null, 50);
+    if (!budget.aborted) assert.deepEqual(sortPlacements(budget.solutions), sortPlacements(full.solutions));
+    else assert.ok(budget.nodes > 50);
+  }
+});
+
+test('placements with a duplicate cell are invalid (production and reference)', () => {
+  for (let seed = 0; seed < 100; seed++) {
+    const { rng, puzzle } = randomBoardPuzzle(seed + 30000);
+    const placement = randomPlacement(rng, puzzle);
+    placement[1] = placement[0];
+    assert.equal(isValidPlacement(puzzle, placement), false);
+    assert.equal(refValid(puzzle, placement), false);
+  }
+});
+
+test('trueStatements: zoneCount only for 2..k heroes, alone exactly when the hero is alone', () => {
+  for (let seed = 0; seed < 300; seed++) {
+    const { rng, puzzle } = randomBoardPuzzle(seed + 40000);
+    const hidden = randomValidPlacement(rng, puzzle);
+    if (!hidden) continue;
+    for (const st of trueStatements(puzzle, hidden)) {
+      if (st.type === 'zoneCount') assert.ok(st.n >= 2 && st.n <= puzzle.heroes.length, JSON.stringify(st));
+      if (st.type === 'alone') assert.ok(refEval(puzzle, hidden, st));
+    }
+  }
+});

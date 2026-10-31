@@ -1,0 +1,143 @@
+{
+ "version": 1,
+ "seed": "misja-1",
+ "difficulty": "easy",
+ "n": 5,
+ "cells": [
+  [
+   "crate",
+   "ground",
+   "barrel",
+   "ground",
+   "ground"
+  ],
+  [
+   "barrel",
+   "ground",
+   "safe",
+   "ground",
+   "ground"
+  ],
+  [
+   "ground",
+   "ground",
+   "pad",
+   "pad",
+   "ground"
+  ],
+  [
+   "ground",
+   "ground",
+   "ground",
+   "bush",
+   "ground"
+  ],
+  [
+   "ground",
+   "barrel",
+   "ground",
+   "ground",
+   "bush"
+  ]
+ ],
+ "zones": [
+  [
+   0,
+   0,
+   1,
+   1,
+   1
+  ],
+  [
+   0,
+   0,
+   1,
+   1,
+   1
+  ],
+  [
+   0,
+   0,
+   1,
+   1,
+   1
+  ],
+  [
+   0,
+   0,
+   0,
+   2,
+   2
+  ],
+  [
+   2,
+   2,
+   2,
+   2,
+   2
+  ]
+ ],
+ "zoneNames": [
+  "Kanion",
+  "Las",
+  "Baza"
+ ],
+ "heroes": [
+  {
+   "name": "Kora",
+   "gen": "Kory",
+   "gender": "f"
+  },
+  {
+   "name": "Mira",
+   "gen": "Miry",
+   "gender": "f"
+  },
+  {
+   "name": "Rufi",
+   "gen": "Rufiego",
+   "gender": "m"
+  },
+  {
+   "name": "Tesa",
+   "gen": "Tesy",
+   "gender": "f"
+  }
+ ],
+ "statements": [
+  {
+   "type": "on",
+   "cellType": "bush",
+   "who": 0
+  },
+  {
+   "type": "sees",
+   "cellType": "barrel",
+   "who": 0
+  },
+  {
+   "type": "inZone",
+   "zone": 1,
+   "who": 1
+  },
+  {
+   "type": "on",
+   "cellType": "pad",
+   "who": 2
+  },
+  {
+   "type": "sees",
+   "cellType": "safe",
+   "who": 3
+  }
+ ],
+ "solution": [
+  24,
+  3,
+  12,
+  6
+ ],
+ "thief": 2,
+ "id": "misja-1",
+ "title": "Pierwszy skok"
+}

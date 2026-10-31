@@ -18,10 +18,12 @@ for (const [name, ex] of [['example 1', example1], ['example 2', example2]]) {
     ex.statements.forEach((_, i) => {
       const rest = { ...ex, statements: ex.statements.filter((__, j) => j !== i) };
       assert.ok(solve(rest, 2).solutions.length >= 2, `statement ${i} is redundant`);
+      assert.ok(refSolve(rest, 2).length >= 2, `statement ${i} is redundant (reference)`);
     });
   });
 }
 
 test('example 2: valid placements without statements', () => {
   assert.equal(solve({ ...example2, statements: [] }, Infinity).solutions.length, example2.bareSolutions);
+  assert.equal(refSolve({ ...example2, statements: [] }).length, example2.bareSolutions);
 });

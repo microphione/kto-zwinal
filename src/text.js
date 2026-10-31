@@ -19,8 +19,6 @@ const DIRECTION = { northOf: 'na północ', southOf: 'na południe', westOf: 'na
 
 export const droneLabel = st => `D${st.side}${st.index}`;
 
-const genitiveOf = hero => hero.gen ?? HERO_ROSTER.find(h => h.name === hero.name)?.gen ?? hero.name;
-
 export function statementText(puzzle, st) {
   if (st.type === 'drone') {
     return st.n === 0 ? `Dron ${droneLabel(st)} nikogo nie nagrał.` : `Dron ${droneLabel(st)} nagrał jednego bohatera.`;
@@ -40,7 +38,7 @@ export function statementText(puzzle, st) {
     case 'northOf':
     case 'southOf':
     case 'westOf':
-    case 'eastOf': return `${g('Stałem', 'Stałam')} ${DIRECTION[st.type]} od ${genitiveOf(other)}.`;
+    case 'eastOf': return `${g('Stałem', 'Stałam')} ${DIRECTION[st.type]} od ${other.gen}.`;
     case 'alone': return g('Byłem sam w swojej strefie.', 'Byłam sama w swojej strefie.');
     case 'zoneCount': return `W mojej strefie było nas ${st.n}.`;
     case 'sameZone': return `${g('Byłem', 'Byłam')} w tej samej strefie co ${other.name}.`;

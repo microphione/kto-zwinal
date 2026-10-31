@@ -4,9 +4,10 @@ import { getBoard, droneScan } from '../src/board.js';
 import { evaluate, isValidPlacement, thiefOf, UNARY, PAIR } from '../src/statements.js';
 import { statementText } from '../src/text.js';
 
+// Fixed missions are frozen JSON (scripts/freeze-missions.js), so generator changes never alter them.
 const MISSIONS = [
-  { seed: 'misja-1', difficulty: 'easy', title: 'Pierwszy skok' },
-  { seed: 'misja-2', difficulty: 'medium', title: 'Akcja w bazie' },
+  { id: 'misja-1', difficulty: 'easy', title: 'Pierwszy skok' },
+  { id: 'misja-2', difficulty: 'medium', title: 'Akcja w bazie' },
 ];
 const DIFF_LABEL = { easy: 'Łatwa', medium: 'Średnia', hard: 'Trudna', expert: 'Ekspert' };
 const HERO_COLORS = {
@@ -66,16 +67,22 @@ function renderHome() {
   app.appendChild(el(`<h1 class="title">Kto zwinął?</h1>`));
   app.appendChild(el(`<p class="subtitle">Ktoś obrobił sejf. Ustal, kto gdzie stał.</p>`));
   MISSIONS.forEach((m, i) => {
-    const id = key(m.seed, m.difficulty);
+    const id = key(m.id, m.difficulty);
     const b = el(`<button class="btn mission"><span class="num">${i + 1}</span><span class="meta">${esc(m.title)}<small>Misja ${i + 1} · ${DIFF_LABEL[m.difficulty]}</small></span>${solved.has(id) ? '<span class="done">✔</span>' : ''}</button>`);
-    b.onclick = () => startGame(m.seed, m.difficulty, `Misja ${i + 1}: ${m.title}`);
+    b.onclick = async () => {
+      const puzzle = await (await fetch(`puzzles/${m.id}.json`)).json();
+      startGame(puzzle, m.id, `Misja ${i + 1}: ${m.title}`);
+    };
     app.appendChild(b);
   });
   app.appendChild(el(`<div class="section-label">Losowa sprawa</div>`));
   const row = el(`<div class="random-row"></div>`);
   for (const d of Object.keys(DIFF_LABEL)) {
     const b = el(`<button class="btn secondary">${DIFF_LABEL[d]}</button>`);
-    b.onclick = () => startGame(`losowa-${Date.now()}`, d, `Losowa · ${DIFF_LABEL[d]}`);
+    b.onclick = () => {
+      const seed = `losowa-${Date.now()}`;
+      startGame(generatePuzzle(seed, d), seed, `Losowa · ${DIFF_LABEL[d]}`);
+    };
     row.appendChild(b);
   }
   app.appendChild(row);
@@ -85,8 +92,8 @@ function renderHome() {
 }
 
 // ---------- game ----------
-function startGame(seed, difficulty, title) {
-  const puzzle = generatePuzzle(seed, difficulty);
+function startGame(puzzle, seed, title) {
+  const { difficulty } = puzzle;
   const stored = JSON.parse(localStorage.getItem(key(seed, difficulty)) || 'null');
   game = {
     seed, difficulty, title, puzzle,

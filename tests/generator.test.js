@@ -34,7 +34,8 @@ for (const [difficulty, count] of Object.entries(PER_DIFFICULTY)) {
       }
       // Q1 unique
       assert.deepEqual(solve(p, 2).solutions, [p.solution], at);
-      if (cfg.n <= 5) assert.deepEqual(refSolve(p, 2), [p.solution], at);
+      // Independent uniqueness proof: all easy puzzles and the first 8 medium ones (~1 s each).
+      if (cfg.n <= 5 || (difficulty === 'medium' && seed <= 8)) assert.deepEqual(refSolve(p, 2), [p.solution], at);
       // Q2 minimal
       p.statements.forEach((_, i) => {
         const rest = { ...p, statements: p.statements.filter((__, j) => j !== i) };

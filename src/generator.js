@@ -16,6 +16,10 @@ export const DIFFICULTIES = {
 
 const MAX_PER_HERO = 2;
 const SAMPLE_RUNS = 24;
+// Node budgets keep every attempt bounded; an attempt that cannot finish a proof within
+// PROOF_NODES is abandoned and the generator moves on to the next board (still deterministic).
+const SAMPLE_NODES = 20000;
+const PROOF_NODES = 400000;
 
 // Relative preference: qualitative clues over raw coordinates.
 const WEIGHT = {
@@ -105,23 +109,33 @@ function allowed(chosen, st, cfg) {
   return true;
 }
 
-// Placements other than the hidden solution, found by randomised exact searches. Empty means the
-// statements already pin the solution: solve(limit 2) always finds a second solution if one exists.
+// Placements other than the hidden solution, found by budgeted randomised searches. Returns [] only
+// when a complete (non-aborted) search proved the solution unique, null when no proof fits the budget.
 function sampleOthers(puzzle, statements, rng) {
   const truth = puzzle.solution.join();
   const found = new Map();
   for (let i = 0; i < SAMPLE_RUNS; i++) {
-    const { solutions } = solve({ ...puzzle, statements }, 2, rng);
+    const { solutions, aborted } = solve({ ...puzzle, statements }, 2, rng, SAMPLE_NODES);
     for (const p of solutions) if (p.join() !== truth) found.set(p.join(), p);
-    if (found.size === 0) break;
+    if (found.size === 0 && !aborted) return [];
   }
-  return [...found.values()];
+  if (found.size > 0) return [...found.values()];
+  const exact = solve({ ...puzzle, statements }, 2, null, PROOF_NODES);
+  if (exact.aborted) return null;
+  return exact.solutions.filter(p => p.join() !== truth);
+}
+
+// true / false when proven within the budget, null otherwise.
+function provenUnique(puzzle, statements) {
+  const { solutions, aborted } = solve({ ...puzzle, statements }, 2, null, PROOF_NODES);
+  return aborted ? null : solutions.length === 1;
 }
 
 export function selectStatements(rng, puzzle, cfg) {
   const candidates = trueStatements(puzzle, puzzle.solution);
   let chosen = [];
   let sample = sampleOthers(puzzle, chosen, rng);
+  if (!sample) return null;
   while (sample.length > 0) {
     let best = null;
     for (const st of candidates) {
@@ -136,15 +150,19 @@ export function selectStatements(rng, puzzle, cfg) {
     sample = sample.filter(p => evaluate(puzzle, p, best.st));
     if (sample.length < SAMPLE_RUNS / 3) {
       const keys = new Set(sample.map(p => p.join()));
-      for (const p of sampleOthers(puzzle, chosen, rng)) if (!keys.has(p.join())) sample.push(p);
+      const more = sampleOthers(puzzle, chosen, rng);
+      if (!more) return null;
+      for (const p of more) if (!keys.has(p.join())) sample.push(p);
     }
   }
   // Q2: drop every statement that is not needed, trying the least preferred first.
   for (const st of [...chosen].sort((a, b) => WEIGHT[a.type] - WEIGHT[b.type])) {
     const rest = chosen.filter(x => x !== st);
-    if (solve({ ...puzzle, statements: rest }, 2).solutions.length === 1) chosen = rest;
+    const unique = provenUnique(puzzle, rest);
+    if (unique === null) return null;
+    if (unique) chosen = rest;
   }
-  return chosen;
+  return provenUnique(puzzle, chosen) ? chosen : null;
 }
 
 function statementOrder(a, b) {
