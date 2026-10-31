@@ -1,7 +1,7 @@
 // Generated puzzles satisfy RULES.md Q1, Q2, Q4, Q5 and the JSON contract.
 import { test } from 'node:test';
 import assert from 'node:assert/strict';
-import { generatePuzzle, DIFFICULTIES } from '../src/generator.js';
+import { generatePuzzle, DIFFICULTIES, FAMILY } from '../src/generator.js';
 import { solve } from '../src/solver.js';
 import { getBoard, droneScan } from '../src/board.js';
 import { evaluate, isValidPlacement, thiefOf, UNARY, unaryHolds } from '../src/statements.js';
@@ -82,4 +82,20 @@ for (const [difficulty, count] of Object.entries(PER_DIFFICULTY)) {
 test('generation is deterministic per seed and difficulty', () => {
   assert.deepEqual(generatePuzzle('abc', 'medium'), generatePuzzle('abc', 'medium'));
   assert.notDeepEqual(generatePuzzle('abc', 'medium'), generatePuzzle('abd', 'medium'));
+});
+
+// Owner's design table (PLAN.md stage 2b): every clue kind actually shows up in generated cases.
+// Without the diversity rule, hard puzzles had 0 zone-population and 1 same/other-zone clue in 20 seeds.
+test('every clue kind of the design table occurs in generated puzzles', () => {
+  const types = [];
+  for (let seed = 1; seed <= 40; seed++) types.push(...generatePuzzle(`kinds${seed}`, 'hard').statements.map(st => st.type));
+  for (const kind of new Set(Object.values(FAMILY))) {
+    const count = types.filter(t => FAMILY[t] === kind).length;
+    assert.ok(count >= 3, `${kind}: only ${count} in 40 hard puzzles`);
+  }
+  for (const negative of ['notInZone', 'notNextTo', 'otherZone']) {
+    const count = types.filter(t => t === negative).length;
+    // 7 / 16 / 20 now; the pre-fix weights give 0 / 0 / 4.
+    assert.ok(count >= 5, `${negative}: only ${count} in 40 hard puzzles`);
+  }
 });

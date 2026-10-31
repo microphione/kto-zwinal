@@ -1,17 +1,19 @@
-// Procedural boards and puzzles satisfying RULES.md Q1, Q2, Q4, Q5 (Q3 is added in stage 3).
+// Procedural boards and puzzles satisfying RULES.md Q1–Q5 (Q3 via the step solver, src/steps.js).
 import { createRng } from './rng.js';
 import { getBoard, OBSTACLE_TYPES } from './board.js';
 import { trueStatements, isValidPlacement, thiefOf, evaluate } from './statements.js';
 import { solve } from './solver.js';
+import { stepSolve } from './steps.js';
 import { HERO_ROSTER, ZONE_NAMES } from './text.js';
 
 export const PUZZLE_VERSION = 1;
 
+// maxLevel: hardest step-solver technique allowed (3 = one refuted assumption, hard and expert only).
 export const DIFFICULTIES = {
-  easy: { n: 5, heroes: 4, zones: 3, drones: 0, obstacles: 0.16 },
-  medium: { n: 6, heroes: 5, zones: 4, drones: 1, obstacles: 0.17 },
-  hard: { n: 7, heroes: 6, zones: 5, drones: 2, obstacles: 0.18 },
-  expert: { n: 8, heroes: 7, zones: 6, drones: 2, obstacles: 0.18 },
+  easy: { n: 5, heroes: 4, zones: 3, drones: 0, obstacles: 0.16, maxLevel: 2 },
+  medium: { n: 6, heroes: 5, zones: 4, drones: 1, obstacles: 0.17, maxLevel: 2 },
+  hard: { n: 7, heroes: 6, zones: 5, drones: 2, obstacles: 0.18, maxLevel: 3 },
+  expert: { n: 8, heroes: 7, zones: 6, drones: 2, obstacles: 0.18, maxLevel: 3 },
 };
 
 const MAX_PER_HERO = 2;
@@ -21,12 +23,25 @@ const SAMPLE_RUNS = 24;
 const SAMPLE_NODES = 20000;
 const PROOF_NODES = 400000;
 
-// Relative preference: qualitative clues over raw coordinates.
+// Relative preference: qualitative clues over raw coordinates. The negative forms cut few placements,
+// so they get a higher weight to appear at all (the design table lists them as clue kinds).
 const WEIGHT = {
-  inZone: 1, notInZone: 0.8, on: 1.2, nextTo: 1, notNextTo: 0.6, sees: 1, row: 0.3, col: 0.3,
-  northOf: 0.8, southOf: 0.8, westOf: 0.8, eastOf: 0.8, sameZone: 0.7, otherZone: 0.6,
+  inZone: 1, notInZone: 1.2, on: 1.2, nextTo: 1, notNextTo: 1, sees: 1, row: 0.3, col: 0.3,
+  northOf: 0.8, southOf: 0.8, westOf: 0.8, eastOf: 0.8, sameZone: 0.7, otherZone: 1.2,
   alone: 0.8, zoneCount: 0.6, drone: 1,
 };
+// Zone clues cut few placements each; without this the greedy pick and Q2 would almost never keep them.
+const DIVERSITY = 0.8;
+
+// Clue kinds of the design table; directions count as one kind, so do zone population clues.
+export const FAMILY = {
+  inZone: 'zone', notInZone: 'zone', on: 'cell', nextTo: 'next', notNextTo: 'next', sees: 'sees',
+  row: 'line', col: 'line', northOf: 'dir', southOf: 'dir', westOf: 'dir', eastOf: 'dir',
+  sameZone: 'pair', otherZone: 'pair', alone: 'count', zoneCount: 'count', drone: 'drone',
+};
+const familyCount = (list, type) => list.filter(x => FAMILY[x.type] === FAMILY[type]).length;
+// Each repeat of a kind lowers its score, so one puzzle mixes many clue kinds.
+const novelty = (chosen, st) => 1 / (1 + DIVERSITY * familyCount(chosen, st.type));
 
 function growZones(rng, n, count) {
   const zones = new Array(n * n).fill(-1);
@@ -131,7 +146,9 @@ function provenUnique(puzzle, statements) {
   return aborted ? null : solutions.length === 1;
 }
 
-export function selectStatements(rng, puzzle, cfg) {
+// `diverse = false` drops the clue-kind novelty: weak kinds can fill the Q4 slots (2 per hero) before the
+// solution is unique; the same board is then retried without it instead of being thrown away.
+export function selectStatements(rng, puzzle, cfg, diverse = true) {
   const candidates = trueStatements(puzzle, puzzle.solution);
   let chosen = [];
   let sample = sampleOthers(puzzle, chosen, rng);
@@ -142,7 +159,7 @@ export function selectStatements(rng, puzzle, cfg) {
       if (chosen.includes(st) || !allowed(chosen, st, cfg)) continue;
       const cut = sample.filter(p => !evaluate(puzzle, p, st)).length;
       if (cut === 0) continue;
-      const score = (cut / sample.length) * WEIGHT[st.type] * (0.5 + rng.next());
+      const score = (cut / sample.length) * WEIGHT[st.type] * (diverse ? novelty(chosen, st) : 1) * (0.5 + rng.next());
       if (!best || score > best.score) best = { st, score };
     }
     if (!best) return null;
@@ -155,8 +172,9 @@ export function selectStatements(rng, puzzle, cfg) {
       for (const p of more) if (!keys.has(p.join())) sample.push(p);
     }
   }
-  // Q2: drop every statement that is not needed, trying the least preferred first.
-  for (const st of [...chosen].sort((a, b) => WEIGHT[a.type] - WEIGHT[b.type])) {
+  // Q2: drop every statement that is not needed, trying the most repeated types first, then the least preferred.
+  const repeats = st => familyCount(chosen, st.type);
+  for (const st of [...chosen].sort((a, b) => repeats(b) - repeats(a) || WEIGHT[a.type] - WEIGHT[b.type])) {
     const rest = chosen.filter(x => x !== st);
     const unique = provenUnique(puzzle, rest);
     if (unique === null) return null;
@@ -180,10 +198,15 @@ export function generatePuzzle(seed, difficulty = 'easy') {
     const heroes = rng.shuffle(HERO_ROSTER).slice(0, cfg.heroes).map(h => ({ ...h }));
     const puzzle = { version: PUZZLE_VERSION, seed: String(seed), difficulty, ...base, heroes, statements: [], solution: placement };
     if (!isValidPlacement(puzzle, placement)) throw new Error('generator produced an invalid placement');
-    const statements = selectStatements(rng, puzzle, cfg);
+    const statements = selectStatements(rng, puzzle, cfg) ?? selectStatements(rng, puzzle, cfg, false);
     if (!statements) continue;
     puzzle.statements = statements.sort(statementOrder);
+    // Q3: the step solver must reach the solution with the techniques allowed for this difficulty.
+    const graded = stepSolve(puzzle, { maxLevel: cfg.maxLevel });
+    if (!graded.solved) continue;
+    if (graded.placement.join() !== placement.join()) throw new Error('step solver disagrees with the unique solution');
     puzzle.thief = thiefOf(puzzle, placement);
+    puzzle.grade = { level: graded.level, steps: graded.steps.length };
     return puzzle;
   }
 }

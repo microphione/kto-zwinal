@@ -101,37 +101,175 @@ Verification result (workflow `verify-stage2-logic`, 21 agents, both flows indep
 - [x] Re-verification of the fix — small-change review by 1 `sonnet` worker (diff ~100 lines, contained in budget logic): abort logic sound (54 000 budgeted calls, 0 violations), every generator return path needs a complete-search proof, 2000 production puzzles unique and minimal (easy all + 12 medium also by reference); timing p99/max: hard 286/509 ms, expert 805/1062 ms; frozen missions byte-identical; `npm test` 19/19. UI minor (mission fetch without error handling, double tap) fixed.
 - Known gaps (accepted, recorded): reference cannot prove hard/expert uniqueness in reasonable time (production solver + differential tests only); boards with exactly 1 safe spot or a 1-cell zone are not generated and only covered by the tutorial example; zone names use nominative after „w strefie” (style, owner may decide); Q5 for multi-hero statements holds only via Q2 minimality.
 
-## Stage 3 — Deduction solver, difficulty, hints `[ ]`
+## Stage 2b — Alignment with the owner's design table `[x]` (requested 2026-10-31)
 
-Estimate: P50 1.5 h, P80 2.5 h. Agents: main session (opus). Depends on: stage 2. Parallel with stage 4.
+Owner's table (target = "our game" column; the Murdoku column is what the game must not be):
 
-- [ ] Human-style step solver: candidates per hero, techniques (direct statement filter, only-candidate, line-of-sight elimination, thief-at-safe, zone counting, pair/rectangle elimination), no guessing.
-- [ ] Generator accepts only puzzles fully solvable by the step solver.
-- [ ] Difficulty = board size, hero count, hardest technique used, number of steps → easy / medium / hard.
-- [ ] Hint = next deduction step in words ("Bobo can't be in row 2: he would see Mira").
-- [ ] Generator tuning: clue counts and solve depth measured on 200 puzzles per difficulty.
+| Element | Murdoku (not us) | Kto zwinął? (target) |
+|---|---|---|
+| Placement rule | every person in a different row and column | "No one saw anyone": several people per row/column if an obstacle separates them |
+| Goal | victim on the last free cell, deduced | no victim; the safe is a fixed, visible object |
+| Culprit | person in the victim's room | the only hero right next to the safe (same zone) |
+| Rooms and walls | rooms, windows on thick lines | zones with painted borders that do not block sight; no windows |
+| Cells | stand on armchair/bed/rug; not on table/TV/plant/shelf/box | stand on ground/bush/pad; not on crate/barrel/rock/safe |
+| Clue types | room, furniture, beside, row/column, exact offsets, gender, "alone/with a man" | zone/not zone, cell type, next to/not next to obstacle, "I saw X" (first obstacle in line), row/column, general direction ("somewhere north of"), people in zone, same/other zone, drones counting people in a line. No gender, no exact offsets |
+| Clue count | usually 1 per suspect | 1–2 per hero, some stay silent, plus drone facts |
+| Content | handmade cases in a book | procedural generator with proof of uniqueness and minimality, difficulty levels, random cases |
+| Form | paper and pencil | mobile app with line-of-sight preview, "Check" button, undo, progress saving |
 
-Tests: every accepted puzzle solved by the step solver to the same unique solution; step solver never makes a false elimination (checked against the search solver on ≥ 500 puzzles).
+Estimate: P50 1.5 h, P80 2.5 h (P80 risk: the clue-diversity change slows the generator or breaks the
+time bound → tuning round). Critical path: gap audit → implementation → two-flow verification → fixes.
 
-## Stage 4 — Mobile UI `[ ]` (early slice live, see below)
+Gap audit (1 `sonnet` worker, read-only; reconciled by the main session): no Murdoku mechanic leaked in
+(no victim, windows, sight-blocking walls, last free cell, gender clues, exact offsets); rows 1–5 match.
+Gaps and decisions:
+
+- [x] **Progress saving (row "Form")**: a random case gets a new `Date.now()` seed each time and cannot be
+  resumed → store the current random case (`ktozwinal:current`: puzzle + title), "Continue" button on
+  the home screen; undo history saved with the state; a fully solved board shows the win state after reload. `ui/app.js`.
+- [x] **Clue types (row "Clue types")**: on 25 seeds per level `zoneCount`/`otherZone` never appear
+  above easy, `notInZone`/`alone` almost never (greedy weights + Q2 drop order remove them) → type
+  diversity in `selectStatements`: novelty bonus for a type not yet chosen, Q2 drops the most repeated
+  types first. Must keep Q1/Q2/Q4/Q5 and the time bound. `src/generator.js`.
+- [x] **General direction wording**: "Stałem gdzieś na północ od X." (table wording) — `src/text.js`, `RULES.md` §5.
+- [x] **Random generation feedback**: "Losuję…" label; generation runs in a module Web Worker
+  (`ui/gen-worker.js`) so the UI never freezes (verification measured 1.2–3.9 s freezes at 4× CPU
+  throttling with the synchronous generator). `ui/app.js`.
+- Not changed (earlier owner decisions, not contradicted by the table): drones only on medium and above
+  (stage 0); silent heroes are allowed, not forced (easy ~4 %, medium+ ~7–12 %); Q3 deducibility stays
+  in stage 3; line-of-sight preview already exists for placed heroes (toggle).
+- Frozen missions (`puzzles/*.json`) stay byte-identical (golden puzzles). The 2b generator no longer
+  reproduces them from their seeds → `scripts/freeze-missions.js` now refuses to overwrite existing files.
+
+Implementation evidence (main session):
+- Diversity = novelty factor `1 / (1 + 0.8 × repeats of the clue kind)` in the greedy score; Q2 drops the
+  most repeated kinds first. Kinds = table rows (directions one kind, `alone`/`zoneCount` one kind, …).
+  Measured on 20 seeds `kinds1..20`, hard: zone-population clues 0 → 8, same/other zone 1 → 16; every
+  level now has every kind (drones from medium). Timing (desktop, 12 seeds `dist*`): expert avg 302 ms,
+  max 799 ms (before 221 / 729 ms). `otherZone`/`notInZone` stay rare (weak negative clues) — accepted.
+- New test `every clue kind of the design table occurs` (≥ 3 per kind in 20 hard puzzles); it fails on the
+  old generator (`alone/zoneCount: only 0`). `npm test` 20/20; `puzzles/*.json` unchanged (no diff).
+- Headless Chrome 390×844 E2E (scratchpad script): Continue after menu and reload, undo after reload,
+  win, Continue hidden when solved, orphaned state removed, solved mission stays won after reload,
+  "gdzieś" wording, expert generate+render 169 ms — all OK; only console error = `favicon.ico` 404
+  (pre-existing, icons belong to stage 5).
+
+Verification: generator change touches a shared procedure → full two-flow verification (Workflow:
+2 orchestrators `opus` × 2 workers `sonnet`/`haiku`, read-only), then the main session reconciles and
+fixes; UI checked in headless Chrome (390×844) incl. reload/continue.
+
+## Remaining work — owner go of 2026-10-31
+
+Owner decisions (2026-10-31): a solved random case can be reopened — yes; starting a new random case
+asks before discarding an unfinished one — yes; drones on easy — no (stays medium+); old browsers
+without module workers — not important. Owner: "do all the changes and tell me when it is ready".
+Commit/push is **not** included (not explicitly asked) — asked at the end.
+
+| | P50 | P80 |
+|---|---|---|
+| Calendar time (critical path 2c → 3 → 5 → 7) | 5.5 h | 8.5 h |
+| Agent effort (sum, incl. verification agents) | 7 h | 11 h |
+
+- Sequential by design: the main session (opus) implements every stage; agents only analyse and verify
+  (no agent runs alongside the main session's own work on the same scope).
+- P80 risks: step solver too weak → generator yield/time drops (tuning round); hints wording for the
+  trial technique; service-worker caching keeping stale files after a deploy.
+
+## Stage 2c — Owner decisions in the UI `[x]`
+
+Estimate: P50 30 min, P80 45 min. Agent: main session. Depends on: stage 2b. Files: `ui/app.js` (+ `css/style.css`).
+
+- [x] Solved random case stays on the home screen (✔, opens in the won state) until a new one is drawn.
+- [x] Drawing a new case while the current one is unfinished (has progress, not solved) asks first (in-app modal).
+- [x] The replaced random id is pruned from `ktozwinal:solved`.
+- [x] "Wyczyść" uses the same in-app question instead of the native `confirm()`.
+
+Verification: E2E in headless Chrome now; covered again by the stage 7 two-flow verification.
+Evidence: `e2e-keep.mjs` — "Ostatnia sprawa" ✔ after a win, reopens won, no question when solved, solved id
+pruned, question on an unfinished case, "Wróć" keeps it, "Losuj nową" draws — all OK; `e2e2.mjs` all OK.
+Elapsed ~20 min.
+
+## Stage 3 — Deduction solver, difficulty, hints `[x]`
+
+Estimate: P50 2.5 h, P80 4 h. Agents: main session (opus) designs and implements; design double-checked by
+1 `sonnet` worker (read-only) before coding. Depends on: stage 2b.
+
+Design (`src/steps.js`): state = candidate cells per hero + R1/R2 facts; repeat the cheapest technique that
+changes something, log each step `{ technique, hero?, cells removed/kept, reason }`:
+
+| Level | Technique | Rule (sound by R1/R2/statements) |
+|---|---|---|
+| 1 | statements | unary statements filter each hero's cells (start) |
+| 1 | fixed hero | a hero with one cell stands there: remove that cell and every cell it sees from the others; on a safe spot → others leave the safe spots; `alone` → others leave its zone |
+| 1 | thief | only one hero can still reach a safe spot → it is the thief (keeps only safe spots); a hero with only safe spots → the others leave them |
+| 1 | drone | `0` → nobody in the scan; `1` with one possible hero → that hero is in the scan; a hero sure to be in the scan → the others leave it |
+| 2 | pair clue | direction / same / other zone: drop cells with no partner cell left |
+| 2 | sight | drop cell x of A when every cell of B is x or seen from x |
+| 2 | zone count | `alone` / `zoneCount`: drop cells whose zone cannot hold the stated number (must / could counting) |
+| 3 | trial | "if A stood on x, levels 1–2 lead to a contradiction" → drop x (one assumption, no nesting) |
+
+- [x] Step solver + Polish step texts (hint wording) — `src/steps.js`, `src/text.js` (`stepText`, „reason → conclusion”).
+- [x] Generator accepts only puzzles the step solver solves completely (Q3); level 3 allowed only on hard/expert.
+- [x] `grade` added to generated puzzles: `{ level, steps }` (additive to the frozen contract).
+- [x] Hint for the player's state (`nextHint`): first wrongly placed hero; otherwise the step solver is re-run with the
+  correctly placed heroes as facts and the hint is the dependency chain of the first step that fixes another hero.
+- [x] Tuning measured on ≥ 200 puzzles per difficulty: yield, time, steps, level mix.
+
+Tests: step solver never removes the solution's cell (≥ 500 puzzles incl. random statements vs the exact
+solver: every elimination is sound); every generated puzzle solved by the step solver to its unique
+solution; examples §7/§8 and both frozen missions solved by the step solver.
+
+Design review (1 `sonnet` worker, read-only, before coding): all rules sound; added from it — pair clues
+checked together with R1 and distinct cells, zone forcing for `zoneCount` (must/could, subject counted),
+`alone` in both directions, thief/drone contradictions, full statement check once everyone is fixed,
+hints via re-solve with facts + dependency chain, trial ordered by the smallest candidate set.
+
+Evidence:
+- Bug found by the first probe and fixed: copying statements with `index` overwrote the drone's line index
+  (field renamed `sid`); example 2 and mission 2 then solved.
+- Generator: Q2/Q4 slots ran out under the clue-kind novelty in 87 % of expert attempts (420/480 →
+  new boards); now the same board is retried once without novelty. Timing (desktop, Node; 200 seeds,
+  expert 60): easy avg 8 / p95 23 / max 50 ms; medium 34 / 110 / 240 ms; hard 75 / 258 / 605 ms;
+  expert 328 / 899 / 1077 ms (stage 2b had expert max 1.8 s). Levels: easy 1:18 2:182; medium 1:7 2:193;
+  hard 1:5 2:142 3:53; expert 1:1 2:43 3:16. Avg steps 9.5 / 13.1 / 18.6 / 22.5.
+- `tests/steps.test.js` (8 tests): soundness vs the exact solver on 500 random (often contradictory)
+  and 600 satisfiable statement sets incl. 8×8 boards (no solution cell ever removed, contradiction ⇔ no
+  solution); examples and missions solved without trial; 68 generated puzzles graded and solved; hint-only
+  play solves every tested puzzle hero by hero; a wrong hero is reported first. Mutation check: 3 unsound
+  mutants (zone off-by-one ×2, sight without `y ≠ x`) are killed; a weakening mutant (pair without R1)
+  survives as expected (sound). Kinds test still passes (fallback keeps the mix). `npm test` 28/28.
+- Elapsed ~1.5 h (P50 2.5 h).
+
+## Stage 4 — Mobile UI `[x]`
 
 Estimate: P50 2.5 h, P80 3.5 h. Agents: 1 `sonnet` worker implements under the main session; main reviews. Depends on: frozen API contract from stage 2. Parallel with stage 3.
 
-- [ ] Plain HTML/CSS/JS (ES modules, no build), portrait-first, touch-friendly.
-- [ ] Board render (SVG): zones, walls, obstacles, safe, drones; cartoon-arena style.
-- [ ] Hero tray with statements; select hero → tap cell to place; X mode; undo; clear.
-- [ ] Optional helper: show line of sight of a placed hero.
-- [ ] Check / accuse the thief; win screen.
+- [x] Plain HTML/CSS/JS (ES modules, no build), portrait-first, touch-friendly.
+- [x] Board render (SVG): zones, painted borders, obstacles, safe, drones; cartoon-arena style.
+- [x] Hero tray with statements; select hero → tap cell to place; X mode; undo; clear.
+- [x] Optional helper: show line of sight of placed heroes (toggle „Wzrok”).
+- [x] Check; win screen names the thief and counts hints.
 
 Verification: small-change review by one `sonnet` worker + manual run in a mobile viewport (Playwright screenshot).
+Evidence: built as the early slice, then stages 2b/2c/5; headless Chrome 390×844 E2E scripts `e2e-keep.mjs`, `e2e2.mjs`, `e2e3.mjs` all OK.
 
-## Stage 5 — Progress, levels, PWA `[ ]`
+## Stage 5 — Progress, levels, PWA `[x]`
 
 Estimate: P50 1 h, P80 1.5 h. Agents: main session. Depends on: stages 3 and 4 (sync point).
 
-- [ ] Difficulty select, daily puzzle (date seed), localStorage progress, hint button wired to stage 3.
-- [ ] Tutorial with the handmade puzzles.
-- [ ] PWA: manifest, icons, service worker (offline).
+Re-estimated 2026-10-31: P50 1.5 h, P80 2.5 h (main session).
+
+- [x] Difficulty select and localStorage progress (stages 2b/2c).
+- [x] Daily case: seed = local date, medium, generated in the worker, stored with its date (`ktozwinal:daily`), own home-screen entry with ✔.
+- [x] Hint button wired to stage 3: modal with the last ≤ 3 chain steps and the conclusion, „Postaw” places the hero; a wrong hero → „Zdejmij”; hints counted (win screen).
+- [x] Tutorial: example §7 as „Samouczek” (`puzzles/samouczek.json`, test: equals example 1, unique by the reference) with a short intro; hints walk through it.
+- [x] PWA: `manifest.webmanifest`, `icons/` (SVG + PNG 192/512/180), favicon (404 gone), `sw.js` (shell precache,
+  stale-while-revalidate for same-origin → a deploy shows on the next load; fonts cached on first use).
+
+Evidence: `e2e3.mjs` — tutorial intro, hint chain + „Postaw” ×4 solves it, win shows „Podpowiedzi: 4”, ✔ on home;
+wrong hero → hint „stoi w złym miejscu” + „Zdejmij”; daily stored as `dzien-2026-10-31`, solved, ✔; page controlled
+by the service worker; offline: home, random easy case (worker + modules from cache) and mission 2 load; 0 console
+errors. Regression `e2e-keep.mjs`, `e2e2.mjs` all OK (now 0 console errors); `npm test` 29/29. Elapsed ~45 min.
 
 ## Stage 6 — GitHub Pages deploy `[x]` (pulled ahead on owner request)
 
@@ -143,8 +281,39 @@ Estimate: P50 20 min, P80 40 min. **Requires user consent** (create repo, commit
 
 Estimate: P50 1 h, P80 1.5 h. Agents: two-flow verification of the whole app (logic re-run + UI). Depends on: stage 6.
 
-- [ ] Test suite green; two-flow report reconciled; corrections re-verified.
-- [ ] User plays on a phone; feedback recorded here.
+- [x] Test suite green; two-flow report reconciled; corrections applied (re-verification below).
+- [ ] User plays on a phone; feedback recorded here — `BLOCKED`: needs the owner's consent to commit and push
+  (GitHub Pages serves the last commit), then the owner's phone test.
+
+Two-flow verification (workflow `verify-stage7-final`, 9 agents, 2026-10-31): 0 BLOCKER. Logic PASS —
+soundness of every technique vs the independent reference (3000 small + 600 large differential cases,
+adversarial sets on §7/§8, oracle mutants killed), Q1–Q5 + Q3 on 395 production puzzles, determinism,
+hints always point to the solution (5706 calls), 9723 production texts without `undefined`.
+Fixed:
+- MAJOR: hint chains did not justify the cell in 48–64 % of hints (deps ignored earlier narrowing of the
+  narrowed hero) → deps include it; new test replays the chain and must leave exactly the hinted cell (fails on
+  the old code). Chains now p50 6 / p90 10 / max 20 steps → the modal shows all steps up to 6, otherwise the
+  last 4 and „Pokaż wszystkie kroki (N)”.
+- MAJOR: service-worker updates could arrive ~10 min + 2 launches late and mix files of two deploys
+  (stale-while-revalidate through the HTTP cache) → same-origin network-first with `cache: 'no-cache'`, cache
+  only offline; install precaches with `cache: 'reload'`. E2E on a copy: a changed file is served on the next
+  load; offline still works.
+- MINOR: „zostało 24 pola” → „zostały 24 pola”; comma before a repeated „ani”; a trial that knocks out
+  its own cell now reads „zasady i zeznania by się wykluczały”; `maxLevel` comment; old daily state and
+  solved id pruned; `tests/pwa.test.js` checks that `sw.js` precaches exactly the shipped files.
+- Expert timing correction: the flows found rare desktop seeds of 2.0–2.4 s (p95 ~1.0–1.3 s); off the main
+  thread (worker), „Losuję…” shown.
+Known gaps (recorded, not fixed): daily label stays yesterday's if the menu is left open over midnight (the
+case itself is today's); long „fixed” texts (~250 chars) wrap on 390 px; no real-phone / iOS Safari run;
+hard/expert uniqueness rests on the production solver (reference infeasible for n > 6).
+Evidence after fixes: `npm test` 30/30; E2E `e2e-keep`, `e2e2`, `e2e3`, `e2e4` (SW update + folded hint) all
+OK, 0 console errors; `git diff -- puzzles` empty.
+Re-verification of the fixes (1 `sonnet` worker, read-only): 0 BLOCKER, 0 MAJOR; 1337 hints on 60 fresh puzzles
+(empty and partly correct boards) all point to the solution and every chain replay leaves exactly the hinted cell;
+180/180 wrong-hero boards reported; 1672 texts clean (verb agreement, comma, no self-referential trial); `sw.js`
+reviewed; all four E2E suites OK. MINOR: one run of the 4×-throttle timing check stalled 403 ms (> 250 ms) right after
+other E2E runs, 3 reruns OK (72–182 ms) — machine noise, recorded. Stages 2c–7 done except the owner's phone test.
+Elapsed for the owner go (2c → 7): ~4.5 h (P50 5.5 h).
 
 ## Checkpoint log
 
@@ -163,3 +332,35 @@ Estimate: P50 1 h, P80 1.5 h. Agents: two-flow verification of the whole app (lo
   by difficulty) and stage 6 deploy done. Stage 2 two-flow verification: no logic defect; 2 majors and
   the cheap minors fixed (see stage 2), tests 19/19. Next: reconcile the re-verification of the budget
   fix, then stage 3 (step solver, difficulty, hints); stage 4 remainder after the owner's phone test.
+- 2026-10-31 — Stage 2b (owner's design table) added and implemented: random-case save/continue, undo
+  history saved, won state after reload, "Losuję…", clue-kind diversity, "gdzieś na …" wording. Tests 20/20,
+  E2E OK. Elapsed ~45 min so far (P50 1.5 h). Next: two-flow verification, then fixes.
+- 2026-10-31 — Stage 2b two-flow verification (workflow `verify-stage2b-alignment`, 9 agents): 0 BLOCKER,
+  0 MAJOR; Q1/Q2/Q4/Q5/truth/determinism clean on 630 + 290 production puzzles, UI checked in headless
+  Chrome. Fixed: (1) expert tail slower (p99/max ~1.2–1.6 s desktop, single seeds up to 20×) → generation
+  moved to a Web Worker; DIVERSITY 0.5 measured, not faster on 80 seeds, kept 0.8; (2) negative clues
+  (`notInZone`, `otherZone`, `notNextTo`) almost absent → weights 1.2 / 1.2 / 1.0; on 80 hard puzzles now
+  14 / 21 / 24 (before 3 / 0 / 7); (3) old random progress was deleted before generating → stored only
+  after the new case exists; worker failure → toast, buttons restored; (4) test derives kinds from exported `FAMILY`, 40 seeds,
+  also asserts each negative type ≥ 2; (5) freeze script guard. Timing after fixes (desktop, Node):
+  expert 80 seeds avg 388 ms, p95 1.0 s, max 1.8 s; hard 120 seeds avg 75 ms, p95 239 ms, max 455 ms —
+  off the main thread now. E2E: all checks OK, main-thread stall ≤ 147 ms at 4× throttling, navigation
+  race OK. During the fixes the frozen missions were overwritten twice by a chained
+  `node scripts/freeze-missions.js` after a failed edit; restored from `HEAD` (`git diff -- puzzles` empty),
+  then the script was guarded.
+  Known gaps (owner decisions, not done): a solved random case cannot be reopened; starting a new random
+  case discards an unfinished one without asking; solved random ids accumulate in `ktozwinal:solved`
+  (~35 B each); `ktozwinal:current` is not shape-checked (only reachable by manual edits); hard/expert
+  uniqueness rests on the production solver; Q3 (deducibility) is stage 3; browsers without module
+  workers (Firefox < 114, Safari < 15) get the "could not generate" toast for random cases.
+- 2026-10-31 — Re-verification of the fixes (1 `sonnet` worker, read-only): 0 BLOCKER, 0 MAJOR; 215 fresh
+  production puzzles pass Q1/Q2/Q4/Q5/truth/determinism (easy + 10 medium also by the reference); the kinds
+  test fails when the `otherZone`/`notInZone` weights are reverted. 2 MINOR fixed: (a) a random case that
+  finished after the player had left the menu replaced `ktozwinal:current` and deleted the progress of
+  the case being played → now dropped when the menu is gone; (b) negative-clue threshold 2 → 5 (now
+  7 / 16 / 20 on the test seeds; reverted weights give 0 / 0 / 4, so each revert fails). Final evidence:
+  `npm test` 20/20; E2E `e2e-keep.mjs` all OK (only `favicon.ico` 404), `e2e2.mjs` all OK (main-thread
+  stall ≤ 150 ms at 4× throttling, late case dropped, kept case progress intact); `git diff -- puzzles`
+  empty. Stage 2b done, elapsed ~2 h (P50 1.5 h, P80 2.5 h; variance: verification fixes + worker).
+  Not deployed: GitHub Pages still serves the previous commit until the owner asks to commit and push.
+  Next: stage 3 (step solver, difficulty, hints).

@@ -6,3 +6,4 @@ every hero on the map using their statements and the rules, and the thief reveal
 - Play: https://microphione.github.io/kto-zwinal/
 - Rules (normative spec): [RULES.md](RULES.md) · Plan and status: [PLAN.md](PLAN.md)
 - Tests: `npm test` (Node 22)
+- Works offline after the first visit (PWA); tutorial, daily case, hints from the step solver (`src/steps.js`).

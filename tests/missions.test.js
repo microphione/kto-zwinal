@@ -20,3 +20,16 @@ for (const m of MISSIONS) {
     });
   });
 }
+
+// The tutorial is RULES.md §7 (example 1) shipped as frozen JSON.
+test('tutorial: equals example 1, unique (reference), solved by the step solver without trial', async () => {
+  const { example1 } = await import('./fixtures/examples.js');
+  const { stepSolve } = await import('../src/steps.js');
+  const p = JSON.parse(readFileSync(new URL('../puzzles/samouczek.json', import.meta.url), 'utf8'));
+  for (const f of ['n', 'cells', 'zones', 'zoneNames', 'statements', 'solution', 'thief']) assert.deepEqual(p[f], example1[f], f);
+  assert.deepEqual(p.heroes.map(h => [h.name, h.gender]), example1.heroes.map(h => [h.name, h.gender]));
+  assert.deepEqual(refSolve(p, 2), [p.solution]);
+  const r = stepSolve(p, { maxLevel: 2 });
+  assert.deepEqual(r.placement, p.solution);
+  assert.deepEqual(p.grade, { level: r.level, steps: r.steps.length });
+});

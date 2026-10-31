@@ -1,8 +1,8 @@
 // Mobile UI: mission list, board (SVG), hero cards, placement and checking. Logic lives in ../src.
-import { generatePuzzle } from '../src/generator.js';
 import { getBoard, droneScan } from '../src/board.js';
 import { evaluate, isValidPlacement, thiefOf, UNARY, PAIR } from '../src/statements.js';
-import { statementText } from '../src/text.js';
+import { statementText, stepText, cellName } from '../src/text.js';
+import { nextHint } from '../src/steps.js';
 
 // Fixed missions are frozen JSON (scripts/freeze-missions.js), so generator changes never alter them.
 const MISSIONS = [
@@ -32,7 +32,60 @@ function markSolved(id) {
   localStorage.setItem('ktozwinal:solved', JSON.stringify([...s]));
 }
 function save() {
-  localStorage.setItem(key(game.seed, game.difficulty), JSON.stringify({ placement: game.placement, marks: [...game.marks] }));
+  const history = game.history.map(h => ({ placement: h.placement, marks: [...h.marks] }));
+  localStorage.setItem(key(game.seed, game.difficulty), JSON.stringify({ placement: game.placement, marks: [...game.marks], history, hints: game.hints }));
+}
+// The last random case is kept whole (puzzle included), so it can be resumed after leaving or a reload.
+const CURRENT = 'ktozwinal:current';
+const loadCurrent = () => JSON.parse(localStorage.getItem(CURRENT) || 'null');
+function generateInWorker(seed, difficulty) {
+  return new Promise((resolve, reject) => {
+    const worker = new Worker(new URL('./gen-worker.js', import.meta.url), { type: 'module' });
+    worker.onmessage = e => { worker.terminate(); resolve(e.data); };
+    worker.onerror = e => { worker.terminate(); reject(e); };
+    worker.postMessage({ seed, difficulty });
+  });
+}
+// The old case is dropped only once the new one exists.
+function storeRandom(current) {
+  const old = loadCurrent();
+  if (old) {
+    const id = key(old.seed, old.puzzle.difficulty);
+    localStorage.removeItem(id);
+    const solved = solvedSet();
+    if (solved.delete(id)) localStorage.setItem('ktozwinal:solved', JSON.stringify([...solved]));
+  }
+  localStorage.setItem(CURRENT, JSON.stringify(current));
+}
+// The daily case is stored with its date, so a later generator change cannot alter today's board.
+const DAILY = 'ktozwinal:daily';
+function today() {
+  const d = new Date();
+  const two = x => String(x).padStart(2, '0');
+  return { iso: `${d.getFullYear()}-${two(d.getMonth() + 1)}-${two(d.getDate())}`, label: `${two(d.getDate())}.${two(d.getMonth() + 1)}` };
+}
+async function dailyCase() {
+  const { iso, label } = today();
+  const stored = JSON.parse(localStorage.getItem(DAILY) || 'null');
+  if (stored?.date === iso) return stored;
+  const seed = `dzien-${iso}`;
+  const daily = { date: iso, seed, title: `Sprawa dnia ${label}`, puzzle: await generateInWorker(seed, 'medium') };
+  if (stored) {
+    const id = key(stored.seed, 'medium');
+    localStorage.removeItem(id);
+    const solved = solvedSet();
+    if (solved.delete(id)) localStorage.setItem('ktozwinal:solved', JSON.stringify([...solved]));
+  }
+  localStorage.setItem(DAILY, JSON.stringify(daily));
+  return daily;
+}
+
+// Unfinished = not solved and at least one hero or cross on the board.
+function unfinished(current) {
+  const id = key(current.seed, current.puzzle.difficulty);
+  if (solvedSet().has(id)) return false;
+  const stored = JSON.parse(localStorage.getItem(id) || 'null');
+  return Boolean(stored && (stored.placement.some(c => c >= 0) || stored.marks.length));
 }
 
 // ---------- helpers ----------
@@ -59,6 +112,18 @@ function overlay(html) {
   return o;
 }
 
+// In-app yes/no question; tapping outside counts as "no".
+function ask(question, yes, no) {
+  return new Promise(resolve => {
+    const o = overlay(`<p style="font-size:18px;font-weight:800;text-align:center">${esc(question)}</p>
+      <div class="actions"><button class="btn ghost" data-a="no">${esc(no)}</button><button class="btn" data-a="yes">${esc(yes)}</button></div>`);
+    const done = answer => { o.remove(); resolve(answer); };
+    o.querySelector('[data-a="yes"]').onclick = () => done(true);
+    o.querySelector('[data-a="no"]').onclick = () => done(false);
+    o.addEventListener('click', e => { if (e.target === o) resolve(false); });
+  });
+}
+
 // ---------- home ----------
 function renderHome() {
   game = null;
@@ -66,30 +131,62 @@ function renderHome() {
   app.innerHTML = '';
   app.appendChild(el(`<h1 class="title">Kto zwinął?</h1>`));
   app.appendChild(el(`<p class="subtitle">Ktoś obrobił sejf. Ustal, kto gdzie stał.</p>`));
+  const tutorial = el(`<button class="btn mission"><span class="num">?</span><span class="meta">Samouczek<small>Pierwsza sprawa krok po kroku</small></span>${solved.has(key('samouczek', 'easy')) ? '<span class="done">✔</span>' : ''}</button>`);
+  tutorial.onclick = () => openFixed(tutorial, 'samouczek', 'Samouczek', showTutorial);
+  app.appendChild(tutorial);
   MISSIONS.forEach((m, i) => {
     const id = key(m.id, m.difficulty);
     const b = el(`<button class="btn mission"><span class="num">${i + 1}</span><span class="meta">${esc(m.title)}<small>Misja ${i + 1} · ${DIFF_LABEL[m.difficulty]}</small></span>${solved.has(id) ? '<span class="done">✔</span>' : ''}</button>`);
-    b.onclick = async () => {
-      if (b.disabled) return;
-      b.disabled = true;
-      try {
-        const res = await fetch(`puzzles/${m.id}.json`);
-        if (!res.ok) throw new Error(res.status);
-        startGame(await res.json(), m.id, `Misja ${i + 1}: ${m.title}`);
-      } catch {
-        b.disabled = false;
-        toast('Nie udało się wczytać misji. Sprawdź połączenie.');
-      }
-    };
+    b.onclick = () => openFixed(b, m.id, `Misja ${i + 1}: ${m.title}`);
     app.appendChild(b);
   });
+  app.appendChild(el(`<div class="section-label">Sprawa dnia</div>`));
+  const { iso, label } = today();
+  const dailyDone = solved.has(key(`dzien-${iso}`, 'medium'));
+  const daily = el(`<button class="btn mission"><span class="num">★</span><span class="meta">Sprawa dnia ${label}<small>Codziennie nowa · ${DIFF_LABEL.medium}</small></span>${dailyDone ? '<span class="done">✔</span>' : ''}</button>`);
+  daily.onclick = async () => {
+    if (daily.disabled) return;
+    daily.disabled = true;
+    daily.querySelector('small').textContent = 'Losuję…';
+    try {
+      const d = await dailyCase();
+      if (daily.isConnected) startGame(d.puzzle, d.seed, d.title);
+    } catch {
+      daily.disabled = false;
+      daily.querySelector('small').textContent = 'Spróbuj jeszcze raz';
+      toast('Nie udało się przygotować sprawy dnia.');
+    }
+  };
+  app.appendChild(daily);
   app.appendChild(el(`<div class="section-label">Losowa sprawa</div>`));
+  const current = loadCurrent();
+  if (current) {
+    const done = solved.has(key(current.seed, current.puzzle.difficulty));
+    const label = done ? 'Ostatnia sprawa' : 'Kontynuuj';
+    const b = el(`<button class="btn mission"><span class="num">▶</span><span class="meta">${label}<small>${esc(current.title)}</small></span>${done ? '<span class="done">✔</span>' : ''}</button>`);
+    b.onclick = () => startGame(current.puzzle, current.seed, current.title);
+    app.appendChild(b);
+  }
   const row = el(`<div class="random-row"></div>`);
   for (const d of Object.keys(DIFF_LABEL)) {
     const b = el(`<button class="btn secondary">${DIFF_LABEL[d]}</button>`);
-    b.onclick = () => {
+    b.onclick = async () => {
+      if (row.classList.contains('busy')) return;
+      if (current && unfinished(current) && !(await ask('Masz niedokończoną sprawę. Porzucić ją i wylosować nową?', 'Losuj nową', 'Wróć'))) return;
+      row.classList.add('busy');
+      b.textContent = 'Losuję…';
       const seed = `losowa-${Date.now()}`;
-      startGame(generatePuzzle(seed, d), seed, `Losowa · ${DIFF_LABEL[d]}`);
+      try {
+        const current = { seed, title: `Losowa · ${DIFF_LABEL[d]}`, puzzle: await generateInWorker(seed, d) };
+        // The player left the menu meanwhile: keep whatever they are playing, drop the new case.
+        if (!row.isConnected) return;
+        storeRandom(current);
+        startGame(current.puzzle, current.seed, current.title);
+      } catch {
+        row.classList.remove('busy');
+        b.textContent = DIFF_LABEL[d];
+        toast('Nie udało się wylosować sprawy. Spróbuj jeszcze raz.');
+      }
     };
     row.appendChild(b);
   }
@@ -99,8 +196,21 @@ function renderHome() {
   app.appendChild(rules);
 }
 
+async function openFixed(button, id, title, intro) {
+  if (button.disabled) return;
+  button.disabled = true;
+  try {
+    const res = await fetch(`puzzles/${id}.json`);
+    if (!res.ok) throw new Error(res.status);
+    startGame(await res.json(), id, title, intro);
+  } catch {
+    button.disabled = false;
+    toast('Nie udało się wczytać sprawy. Sprawdź połączenie.');
+  }
+}
+
 // ---------- game ----------
-function startGame(puzzle, seed, title) {
+function startGame(puzzle, seed, title, intro = null) {
   const { difficulty } = puzzle;
   const stored = JSON.parse(localStorage.getItem(key(seed, difficulty)) || 'null');
   game = {
@@ -112,14 +222,19 @@ function startGame(puzzle, seed, title) {
     mode: 'place',
     showSight: true,
     checked: false,
-    history: [],
+    history: (stored?.history ?? []).map(h => ({ placement: h.placement, marks: new Set(h.marks) })),
+    hints: stored?.hints ?? 0,
     won: false,
   };
   game.drones = puzzle.statements.filter(st => st.type === 'drone').map((st, i) => ({ st, label: `D${i + 1}`, scan: droneScan(game.board, st.side, st.index) }));
   const firstFree = game.placement.indexOf(-1);
   game.selected = firstFree >= 0 ? firstFree : 0;
+  game.won = firstFree < 0 && isSolved();
   renderGame();
-  if (!localStorage.getItem('ktozwinal:seenRules')) {
+  if (intro) {
+    localStorage.setItem('ktozwinal:seenRules', '1');
+    intro();
+  } else if (!localStorage.getItem('ktozwinal:seenRules')) {
     localStorage.setItem('ktozwinal:seenRules', '1');
     showRules();
   }
@@ -233,6 +348,51 @@ function clearAll() {
   game.selected = 0;
   game.won = false;
   afterChange();
+}
+
+function hint() {
+  if (game.won) return toast('Sprawa jest już rozwiązana.');
+  const { puzzle } = game;
+  const h = nextHint(puzzle, game.placement);
+  const hero = puzzle.heroes[h.hero];
+  game.hints++;
+  save();
+  if (h.kind === 'wrong') {
+    const o = overlay(`<h2>Podpowiedź</h2><p style="font-size:18px;text-align:center"><b>${esc(hero.name)}</b> stoi w złym miejscu.</p>
+      <div class="actions"><button class="btn ghost" data-a="ok">OK</button><button class="btn" data-a="go">Zdejmij</button></div>`);
+    o.querySelector('[data-a="ok"]').onclick = () => o.remove();
+    o.querySelector('[data-a="go"]').onclick = () => {
+      o.remove();
+      snapshot();
+      game.placement[h.hero] = -1;
+      game.selected = h.hero;
+      afterChange();
+    };
+    return;
+  }
+  // The full chain justifies the cell; long chains start folded to their last steps.
+  const SHORT = 6;
+  const folded = h.chain.length > SHORT ? h.chain.length - 4 : 0;
+  const items = h.chain.map((st, i) => `<li${i < folded ? ' hidden' : ''}>${esc(stepText(puzzle, st))}</li>`).join('');
+  const o = overlay(`<h2>Podpowiedź</h2>
+    ${folded ? `<button class="btn small ghost hint-more" data-a="all">Pokaż wszystkie kroki (${h.chain.length})</button>` : ''}
+    <ol class="hint-steps">${items}</ol>
+    <p style="font-size:18px;text-align:center">Więc <b>${esc(hero.name)}</b> stoi na polu <b>${cellName(puzzle, h.cell)}</b>.</p>
+    <div class="actions"><button class="btn ghost" data-a="ok">OK</button><button class="btn" data-a="go">Postaw</button></div>`);
+  o.querySelector('[data-a="all"]')?.addEventListener('click', e => {
+    o.querySelectorAll('.hint-steps li[hidden]').forEach(li => { li.hidden = false; });
+    e.target.remove();
+  });
+  o.querySelector('[data-a="ok"]').onclick = () => o.remove();
+  o.querySelector('[data-a="go"]').onclick = () => {
+    o.remove();
+    snapshot();
+    game.placement[h.hero] = h.cell;
+    game.marks.delete(h.cell);
+    const next = game.placement.findIndex(c => c < 0);
+    if (next >= 0) game.selected = next;
+    afterChange();
+  };
 }
 
 // ---------- drawing ----------
@@ -379,8 +539,9 @@ function renderGame() {
   }
   app.appendChild(cards);
 
-  const extra = el(`<div class="toolbar" style="grid-template-columns:1fr 1fr">
-    <button class="btn small ghost" data-act="sight">Linie wzroku: ${game.showSight ? 'wł.' : 'wył.'}</button>
+  const extra = el(`<div class="toolbar" style="grid-template-columns:1.3fr 1fr 1fr">
+    <button class="btn small ghost" data-act="sight">Wzrok: ${game.showSight ? 'wł.' : 'wył.'}</button>
+    <button class="btn small secondary" data-act="hint">Podpowiedź</button>
     <button class="btn small danger" data-act="clear">Wyczyść</button>
   </div>`);
   app.appendChild(extra);
@@ -393,8 +554,9 @@ function renderGame() {
       mark: () => { game.mode = 'mark'; renderGame(); },
       undo,
       check,
+      hint,
       sight: () => { game.showSight = !game.showSight; renderGame(); },
-      clear: () => { if (confirm('Wyczyścić planszę?')) clearAll(); },
+      clear: async () => { if (await ask('Wyczyścić planszę?', 'Wyczyść', 'Anuluj')) clearAll(); },
     })[b.dataset.act]();
   });
 }
@@ -405,6 +567,7 @@ function showWin() {
   const o = overlay(`<h2>Sprawa rozwiązana!</h2>
     <div class="avatar win-avatar" style="background:${color(thief)}">${esc(thief.name[0])}</div>
     <p style="text-align:center;font-size:20px;font-weight:800">Sejf ${thief.gender === 'f' ? 'obrobiła' : 'obrobił'} <b>${esc(thief.name)}</b>!</p>
+    <p style="text-align:center;font-weight:800">${game.hints ? `Podpowiedzi: ${game.hints}` : 'Bez żadnej podpowiedzi!'}</p>
     <div class="actions"><button class="btn ghost" data-a="stay">Zobacz planszę</button><button class="btn" data-a="home">Menu</button></div>`);
   o.querySelector('[data-a="stay"]').onclick = () => o.remove();
   o.querySelector('[data-a="home"]').onclick = () => { o.remove(); renderHome(); };
@@ -423,7 +586,7 @@ function showRules() {
       <li><b>Przy sejfie</b> (pole tuż obok, w tej samej strefie) stała dokładnie jedna osoba: złodziej.</li>
       <li>„Obok” = tuż nad, pod, z lewej lub z prawej, w tej samej strefie.</li>
       <li>„Widziałem X” = patrząc w którąś z 4 stron, pierwszą przeszkodą był X.</li>
-      <li>„Na północ od” = w dowolnym rzędzie wyżej (kolumna bez znaczenia).</li>
+      <li>„Gdzieś na północ od” = w dowolnym rzędzie wyżej (kolumna bez znaczenia).</li>
       <li>Dron patrzy wzdłuż rzędu lub kolumny od krawędzi aż do pierwszej przeszkody.</li>
       <li>Wszystkie zeznania są prawdziwe. Rozwiązanie jest dokładnie jedno.</li>
     </ul>
@@ -440,4 +603,19 @@ function showRules() {
   o.querySelector('[data-a="ok"]').onclick = () => o.remove();
 }
 
+function showTutorial() {
+  const o = overlay(`<h2>Samouczek</h2>
+    <p>Ktoś obrobił sejf. Na mapie stały 4 osoby, a Twoim zadaniem jest ustalić, kto gdzie stał.</p>
+    <ul>
+      <li><b>Nikt nikogo nie widział:</b> dwie osoby nie stoją w jednym rzędzie ani kolumnie, chyba że dzieli je przeszkoda.</li>
+      <li>Przy sejfie (tuż obok, w tej samej strefie) stała dokładnie jedna osoba: złodziej.</li>
+      <li>Każde zeznanie jest prawdziwe. Zacznij od Miry: stała w krzakach, a krzaki są tylko dwa.</li>
+      <li>Nie wiesz, co dalej? Stuknij „Podpowiedź”: zobaczysz tok rozumowania krok po kroku.</li>
+    </ul>
+    <div class="actions"><button class="btn ghost" data-a="rules">Pełne zasady</button><button class="btn" data-a="ok">Zaczynam!</button></div>`);
+  o.querySelector('[data-a="ok"]').onclick = () => o.remove();
+  o.querySelector('[data-a="rules"]').onclick = () => { o.remove(); showRules(); };
+}
+
 renderHome();
+if ('serviceWorker' in navigator) navigator.serviceWorker.register('sw.js');

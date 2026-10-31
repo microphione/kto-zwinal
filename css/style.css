@@ -176,3 +176,7 @@ svg.board .cell { cursor: pointer; }
 .modal .actions { display: flex; gap: 10px; justify-content: center; margin-top: 14px; flex-wrap: wrap; }
 .win-avatar { width: 96px; height: 96px; margin: 8px auto; font-size: 48px; }
 .legend { display: grid; grid-template-columns: 40px 1fr; gap: 6px 10px; align-items: center; font-weight: 600; }
+
+.hint-steps { padding-left: 22px; margin: 8px 0; }
+.hint-steps li { margin: 8px 0; font-weight: 600; line-height: 1.35; }
+.hint-more { display: block; margin: 4px auto; }

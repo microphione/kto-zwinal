@@ -60,10 +60,10 @@ Most statements have a subject hero `S` (shown on that hero's card); drone facts
 | `sees` | type `t ∈ {crate, barrel, rock, safe}` | in at least one of the 4 directions the first blocking cell reached from `cell(S)` (see §5.1) has type `t` | „Widziałem/Widziałam skrzynię / beczkę / skałę / sejf.” |
 | `row` | `n` | `r(S) = n` | „Byłem/Byłam w n. rzędzie.” |
 | `col` | `n` | `c(S) = n` | „Byłem/Byłam w n. kolumnie.” |
-| `northOf` | hero `H ≠ S` | `r(S) < r(H)` | „Stałem/Stałam na północ od H.” |
-| `southOf` | hero `H ≠ S` | `r(S) > r(H)` | „… na południe od H.” |
-| `westOf` | hero `H ≠ S` | `c(S) < c(H)` | „… na zachód od H.” |
-| `eastOf` | hero `H ≠ S` | `c(S) > c(H)` | „… na wschód od H.” |
+| `northOf` | hero `H ≠ S` | `r(S) < r(H)` | „Stałem/Stałam gdzieś na północ od H.” |
+| `southOf` | hero `H ≠ S` | `r(S) > r(H)` | „… gdzieś na południe od H.” |
+| `westOf` | hero `H ≠ S` | `c(S) < c(H)` | „… gdzieś na zachód od H.” |
+| `eastOf` | hero `H ≠ S` | `c(S) > c(H)` | „… gdzieś na wschód od H.” |
 | `alone` | — | `zoneHeroes(S) = 1` | „Byłem sam / Byłam sama w swojej strefie.” |
 | `zoneCount` | `2 ≤ n ≤ k` | `zoneHeroes(S) = n` | „W mojej strefie było nas n.” |
 | `sameZone` | hero `H ≠ S` | `zone(S) = zone(H)` | „Byłem/Byłam w tej samej strefie co H.” |
@@ -107,8 +107,9 @@ heroes on the scanned cells; by R1 it is always `0` or `1`. Label: `D` + side le
 
 - **Q1 Unique**: exactly one placement satisfies R1, R2 and all statements.
 - **Q2 Minimal**: removing any single statement yields ≥ 2 placements.
-- **Q3 Deducible**: the step solver (techniques defined in stage 3, `PLAN.md`) reaches the solution
-  without guessing.
+- **Q3 Deducible**: the step solver (`src/steps.js`, techniques in `PLAN.md` stage 3) reaches the
+  solution without guessing. Easy and medium use levels 1–2 only; hard and expert may also need level 3
+  (one assumption refuted by levels 1–2, never nested).
 - **Q4 Readable**: at most 2 statements per hero as subject `S` (being the referenced hero `H`
   does not count); heroes without a statement are allowed („Milczy.”); at most 2 drone facts per
   puzzle.

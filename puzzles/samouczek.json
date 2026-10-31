@@ -1,0 +1,119 @@
+{
+ "version": 1,
+ "seed": "samouczek",
+ "difficulty": "easy",
+ "n": 4,
+ "cells": [
+  [
+   "ground",
+   "ground",
+   "crate",
+   "ground"
+  ],
+  [
+   "ground",
+   "safe",
+   "ground",
+   "ground"
+  ],
+  [
+   "bush",
+   "ground",
+   "rock",
+   "ground"
+  ],
+  [
+   "ground",
+   "ground",
+   "ground",
+   "bush"
+  ]
+ ],
+ "zones": [
+  [
+   0,
+   0,
+   0,
+   0
+  ],
+  [
+   0,
+   0,
+   0,
+   0
+  ],
+  [
+   1,
+   1,
+   1,
+   1
+  ],
+  [
+   1,
+   1,
+   1,
+   1
+  ]
+ ],
+ "zoneNames": [
+  "Kanion",
+  "Oaza"
+ ],
+ "heroes": [
+  {
+   "name": "Bobo",
+   "gen": "Bobo",
+   "gender": "m"
+  },
+  {
+   "name": "Mira",
+   "gen": "Miry",
+   "gender": "f"
+  },
+  {
+   "name": "Zyg",
+   "gen": "Zyga",
+   "gender": "m"
+  },
+  {
+   "name": "Kora",
+   "gen": "Kory",
+   "gender": "f"
+  }
+ ],
+ "statements": [
+  {
+   "type": "westOf",
+   "who": 0,
+   "hero": 1
+  },
+  {
+   "type": "on",
+   "who": 1,
+   "cellType": "bush"
+  },
+  {
+   "type": "notInZone",
+   "who": 2,
+   "zone": 0
+  },
+  {
+   "type": "westOf",
+   "who": 3,
+   "hero": 0
+  }
+ ],
+ "solution": [
+  6,
+  15,
+  9,
+  0
+ ],
+ "thief": 0,
+ "grade": {
+  "level": 2,
+  "steps": 12
+ },
+ "id": "samouczek",
+ "title": "Samouczek"
+}
