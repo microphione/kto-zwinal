@@ -70,8 +70,16 @@ function renderHome() {
     const id = key(m.id, m.difficulty);
     const b = el(`<button class="btn mission"><span class="num">${i + 1}</span><span class="meta">${esc(m.title)}<small>Misja ${i + 1} · ${DIFF_LABEL[m.difficulty]}</small></span>${solved.has(id) ? '<span class="done">✔</span>' : ''}</button>`);
     b.onclick = async () => {
-      const puzzle = await (await fetch(`puzzles/${m.id}.json`)).json();
-      startGame(puzzle, m.id, `Misja ${i + 1}: ${m.title}`);
+      if (b.disabled) return;
+      b.disabled = true;
+      try {
+        const res = await fetch(`puzzles/${m.id}.json`);
+        if (!res.ok) throw new Error(res.status);
+        startGame(await res.json(), m.id, `Misja ${i + 1}: ${m.title}`);
+      } catch {
+        b.disabled = false;
+        toast('Nie udało się wczytać misji. Sprawdź połączenie.');
+      }
     };
     app.appendChild(b);
   });

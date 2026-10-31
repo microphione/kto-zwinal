@@ -93,6 +93,14 @@ Measurements (stage 2): R1 with sight-blocking zone walls saved only 0.5–1 sta
 
 Verification: **full two-flow verification** (logic is the top priority): 2 orchestrators (`opus`) × 2 workers (`sonnet`/`haiku`), read-only, independent; main session reconciles.
 
+Verification result (workflow `verify-stage2-logic`, 21 agents, both flows independent):
+- [x] No logic defect: spec conformance (A: 907 099 comparisons vs reference, B: 48 000 cases + ~510 000 assertions), solver sound and complete in differential tests, 137 + 137 real puzzles of every difficulty pass Q1/Q2/Q4/Q5/truth/thief/determinism, Polish text matches §5, mutation testing kills every real logic mutant.
+- [x] MAJOR fixed: heavy time tail of `generatePuzzle` (some hard/expert seeds took 2–3 min; cause: unbudgeted randomised `solve(limit 2)` in sampling). Fix: node budget + `aborted` flag; only complete searches count as proofs; an attempt without a proof within budget is abandoned. Now: worst reported seeds ≤ 0.6 s; 60 seeds — hard p95 0.16 s / max 0.23 s, expert p95 0.38 s / max 0.57 s (desktop).
+- [x] MAJOR fixed: independent uniqueness check covered only easy → reference now also proves the shipped missions and medium seeds 1–8; examples' necessity and the 53 640 count checked by the reference too.
+- [x] Minor fixed: per-test timeout; tests for `limit`/budget contract, duplicate cells, `zoneCount` bounds; dead fallback in `text.js` removed; fixed missions frozen as JSON (golden puzzles).
+- [x] Re-verification of the fix — small-change review by 1 `sonnet` worker (diff ~100 lines, contained in budget logic): abort logic sound (54 000 budgeted calls, 0 violations), every generator return path needs a complete-search proof, 2000 production puzzles unique and minimal (easy all + 12 medium also by reference); timing p99/max: hard 286/509 ms, expert 805/1062 ms; frozen missions byte-identical; `npm test` 19/19. UI minor (mission fetch without error handling, double tap) fixed.
+- Known gaps (accepted, recorded): reference cannot prove hard/expert uniqueness in reasonable time (production solver + differential tests only); boards with exactly 1 safe spot or a 1-cell zone are not generated and only covered by the tutorial example; zone names use nominative after „w strefie” (style, owner may decide); Q5 for multi-hero statements holds only via Q2 minimality.
+
 ## Stage 3 — Deduction solver, difficulty, hints `[ ]`
 
 Estimate: P50 1.5 h, P80 2.5 h. Agents: main session (opus). Depends on: stage 2. Parallel with stage 4.
@@ -105,7 +113,7 @@ Estimate: P50 1.5 h, P80 2.5 h. Agents: main session (opus). Depends on: stage 2
 
 Tests: every accepted puzzle solved by the step solver to the same unique solution; step solver never makes a false elimination (checked against the search solver on ≥ 500 puzzles).
 
-## Stage 4 — Mobile UI `[ ]`
+## Stage 4 — Mobile UI `[ ]` (early slice live, see below)
 
 Estimate: P50 2.5 h, P80 3.5 h. Agents: 1 `sonnet` worker implements under the main session; main reviews. Depends on: frozen API contract from stage 2. Parallel with stage 3.
 
@@ -125,11 +133,11 @@ Estimate: P50 1 h, P80 1.5 h. Agents: main session. Depends on: stages 3 and 4 (
 - [ ] Tutorial with the handmade puzzles.
 - [ ] PWA: manifest, icons, service worker (offline).
 
-## Stage 6 — GitHub Pages deploy `[ ]`
+## Stage 6 — GitHub Pages deploy `[x]` (pulled ahead on owner request)
 
 Estimate: P50 20 min, P80 40 min. **Requires user consent** (create repo, commit, push). Depends on: stage 5.
 
-- [ ] `git init`, repo on GitHub (`gh`), Pages from main branch, live URL check.
+- [x] `git init`, public repo `microphione/kto-zwinal`, Pages from `main` root, live at https://microphione.github.io/kto-zwinal/ — headless Chrome (390×844) walkthrough of mission 1 to the win screen on the live site, 0 console errors.
 
 ## Stage 7 — Final verification and phone test `[ ]`
 
@@ -150,3 +158,8 @@ Estimate: P50 1 h, P80 1.5 h. Agents: two-flow verification of the whole app (lo
 - 2026-10-31 — Stage 2 implementation done, tests green (13/13). Rule change (open sight) approved by
   the owner; spec, examples and reference updated. Elapsed ~3 h (P50 2 h; variance: generator
   performance rework + rule change and new examples). Next: two-flow verification of stage 2.
+- 2026-10-31 — Owner asked for 2 sample missions on GitHub Pages to test on a phone: early UI slice
+  (stage 4 subset: board, hero cards, place/X/undo/check, win screen, rules, 2 frozen missions + random
+  by difficulty) and stage 6 deploy done. Stage 2 two-flow verification: no logic defect; 2 majors and
+  the cheap minors fixed (see stage 2), tests 19/19. Next: reconcile the re-verification of the budget
+  fix, then stage 3 (step solver, difficulty, hints); stage 4 remainder after the owner's phone test.
