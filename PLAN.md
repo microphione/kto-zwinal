@@ -408,7 +408,7 @@ Sequential: no agent runs alongside the main session on the same scope.
   - [x] Deploy (owner's go 2026-11-01): commit `7b06f26` pushed to `main`, Pages build `built`, live `sw.js` CACHE `ktozwinal-v2`; E2E against the live site 30/30 OK, no console errors (live copy waits for network idle before closing overlays).
   - [ ] Real-phone test by the owner.
 
-## Stage 9 — Rules v3: rows/columns like sudoku, safe on the last free cell `[x]` (owner request 2026-11-01; deploy pending the owner's go)
+## Stage 9 — Rules v3: rows/columns like sudoku, safe on the last free cell `[x]` (owner request 2026-11-01; deployed 2026-11-01 on the owner's go)
 
 Owner (2026-11-01): the safe must have exactly one possible cell, following from the heroes' placement;
 obstacles must not block sight ("jak w sudoku"); drones become an optional hint ("Wyślij drona"), every case
@@ -489,6 +489,9 @@ diagonal thief rule; rewriting tutorial/examples by hand. Excluded: owner decisi
   checks) 33/33 OK in Chrome, no console errors. Verifier (`sonnet`, read-only): OK, 0 findings; other placement
   writers (hint, undo, saves) cannot create a row/column clash in play; `conflicts()` kept as a guard for old
   local `ktozwinal3:` saves.
+- [x] Deploy (owner's go 2026-11-01): commit `4db4f12` pushed to `main`, Pages build `built`, live `sw.js` CACHE
+  `ktozwinal-v3`; E2E `e2e-block.mjs` against the live site 33/33 OK, no console errors.
+- [ ] Real-phone test by the owner.
 
 ## Checkpoint log
 
@@ -542,3 +545,4 @@ diagonal thief rule; rewriting tutorial/examples by hand. Excluded: owner decisi
 - 2026-11-01 — Stage 9 planned (rules v3: rows/columns, safe on the last free cell, diagonal thief, drone hint). Next: 9a.
 - 2026-11-01 — Stage 9 done (rules v3), verified (two flows, 0 BLOCKER/MAJOR, 7 MINOR fixed, 4 accepted); `npm test` 33/33, E2E 28/28. Not committed, not deployed: waiting for the owner's go. Next: owner's phone test.
 - 2026-11-01 — 9g done (sudoku-like placement block in the UI), verified (`npm test` 33/33, E2E 33/33, 1 verifier OK). Not committed, not deployed: waiting for the owner's go.
+- 2026-11-01 — Stage 9 deployed (`4db4f12`), live E2E 33/33. Next: owner's phone test.
