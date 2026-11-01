@@ -317,7 +317,7 @@ reviewed; all four E2E suites OK. MINOR: one run of the 4×-throttle timing chec
 other E2E runs, 3 reruns OK (72–182 ms) — machine noise, recorded. Stages 2c–7 done except the owner's phone test.
 Elapsed for the owner go (2c → 7): ~4.5 h (P50 5.5 h).
 
-## Stage 8 — Hidden safe `[x]` (owner request 2026-11-01; deploy pending the owner's go)
+## Stage 8 — Hidden safe `[x]` (owner request 2026-11-01; deployed 2026-11-01 on the owner's go)
 
 Owner: the safe's location must be deduced too, not only the thief. Owner asked to copy Murdoku's exact
 rules from murdoku.com — declined (the game must stay an original design, not a recreation); offered two
@@ -404,7 +404,8 @@ Sequential: no agent runs alongside the main session on the same scope.
     before the safe is placed the check judges each pair separately, so two pairs needing two different hiding
     cells are not reported (no false reports; the win check is exact) — accepted; redundant safe-only step text
     shortened to „X stoi na polu …”. `tests/steps.test.js` 8/8 after that edit.
-  - Not done: real-phone test; deploy waits for the owner's go.
+  - [x] Deploy (owner's go 2026-11-01): commit `7b06f26` pushed to `main`, Pages build `built`, live `sw.js` CACHE `ktozwinal-v2`; E2E against the live site 30/30 OK, no console errors (live copy waits for network idle before closing overlays).
+  - [ ] Real-phone test by the owner.
 
 ## Checkpoint log
 
