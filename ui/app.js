@@ -1,6 +1,6 @@
 // Mobile UI: mission list, board (SVG), hero cards, placement and checking. Logic lives in ../src.
-import { getBoard, droneScan } from '../src/board.js';
-import { evaluate, isValidPlacement, thiefOf, UNARY, PAIR } from '../src/statements.js';
+import { getBoard, withSafe, safeCandidates } from '../src/board.js';
+import { evaluate, isValidPlacement, thiefOf, UNARY, PAIR, SAFE_PAIR } from '../src/statements.js';
 import { statementText, stepText, cellName } from '../src/text.js';
 import { nextHint } from '../src/steps.js';
 
@@ -24,19 +24,24 @@ const app = document.getElementById('app');
 let game = null;
 
 // ---------- storage ----------
-const key = (seed, difficulty) => `ktozwinal:${difficulty}:${seed}`;
-const solvedSet = () => new Set(JSON.parse(localStorage.getItem('ktozwinal:solved') || '[]'));
+// v2 (hidden safe) uses its own namespace: progress and cases saved by v1 no longer fit and are removed.
+const NS = 'ktozwinal2';
+for (const k of Object.keys(localStorage)) if (k.startsWith('ktozwinal:')) localStorage.removeItem(k);
+const key = (seed, difficulty) => `${NS}:${difficulty}:${seed}`;
+const SOLVED = `${NS}:solved`;
+const SEEN_RULES = `${NS}:seenRules`;
+const solvedSet = () => new Set(JSON.parse(localStorage.getItem(SOLVED) || '[]'));
 function markSolved(id) {
   const s = solvedSet();
   s.add(id);
-  localStorage.setItem('ktozwinal:solved', JSON.stringify([...s]));
+  localStorage.setItem(SOLVED, JSON.stringify([...s]));
 }
 function save() {
-  const history = game.history.map(h => ({ placement: h.placement, marks: [...h.marks] }));
-  localStorage.setItem(key(game.seed, game.difficulty), JSON.stringify({ placement: game.placement, marks: [...game.marks], history, hints: game.hints }));
+  const history = game.history.map(h => ({ placement: h.placement, safe: h.safe, marks: [...h.marks] }));
+  localStorage.setItem(key(game.seed, game.difficulty), JSON.stringify({ placement: game.placement, safe: game.safe, marks: [...game.marks], history, hints: game.hints }));
 }
 // The last random case is kept whole (puzzle included), so it can be resumed after leaving or a reload.
-const CURRENT = 'ktozwinal:current';
+const CURRENT = `${NS}:current`;
 const loadCurrent = () => JSON.parse(localStorage.getItem(CURRENT) || 'null');
 function generateInWorker(seed, difficulty) {
   return new Promise((resolve, reject) => {
@@ -53,12 +58,12 @@ function storeRandom(current) {
     const id = key(old.seed, old.puzzle.difficulty);
     localStorage.removeItem(id);
     const solved = solvedSet();
-    if (solved.delete(id)) localStorage.setItem('ktozwinal:solved', JSON.stringify([...solved]));
+    if (solved.delete(id)) localStorage.setItem(SOLVED, JSON.stringify([...solved]));
   }
   localStorage.setItem(CURRENT, JSON.stringify(current));
 }
 // The daily case is stored with its date, so a later generator change cannot alter today's board.
-const DAILY = 'ktozwinal:daily';
+const DAILY = `${NS}:daily`;
 function today() {
   const d = new Date();
   const two = x => String(x).padStart(2, '0');
@@ -74,18 +79,18 @@ async function dailyCase() {
     const id = key(stored.seed, 'medium');
     localStorage.removeItem(id);
     const solved = solvedSet();
-    if (solved.delete(id)) localStorage.setItem('ktozwinal:solved', JSON.stringify([...solved]));
+    if (solved.delete(id)) localStorage.setItem(SOLVED, JSON.stringify([...solved]));
   }
   localStorage.setItem(DAILY, JSON.stringify(daily));
   return daily;
 }
 
-// Unfinished = not solved and at least one hero or cross on the board.
+// Unfinished = not solved and at least one hero, the safe or a cross on the board.
 function unfinished(current) {
   const id = key(current.seed, current.puzzle.difficulty);
   if (solvedSet().has(id)) return false;
   const stored = JSON.parse(localStorage.getItem(id) || 'null');
-  return Boolean(stored && (stored.placement.some(c => c >= 0) || stored.marks.length));
+  return Boolean(stored && (stored.placement.some(c => c >= 0) || stored.safe >= 0 || stored.marks.length));
 }
 
 // ---------- helpers ----------
@@ -130,7 +135,7 @@ function renderHome() {
   const solved = solvedSet();
   app.innerHTML = '';
   app.appendChild(el(`<h1 class="title">Kto zwinął?</h1>`));
-  app.appendChild(el(`<p class="subtitle">Ktoś obrobił sejf. Ustal, kto gdzie stał.</p>`));
+  app.appendChild(el(`<p class="subtitle">Ktoś obrobił ukryty sejf. Ustal, kto gdzie stał i gdzie był sejf.</p>`));
   const tutorial = el(`<button class="btn mission"><span class="num">?</span><span class="meta">Samouczek<small>Pierwsza sprawa krok po kroku</small></span>${solved.has(key('samouczek', 'easy')) ? '<span class="done">✔</span>' : ''}</button>`);
   tutorial.onclick = () => openFixed(tutorial, 'samouczek', 'Samouczek', showTutorial);
   app.appendChild(tutorial);
@@ -215,46 +220,69 @@ function startGame(puzzle, seed, title, intro = null) {
   const stored = JSON.parse(localStorage.getItem(key(seed, difficulty)) || 'null');
   game = {
     seed, difficulty, title, puzzle,
-    board: getBoard(puzzle),
     placement: stored?.placement ?? new Array(puzzle.heroes.length).fill(-1),
+    safe: stored?.safe ?? -1,
     marks: new Set(stored?.marks ?? []),
-    selected: 0,
+    selected: 0, // a hero index, or SAFE_SEL for the safe
     mode: 'place',
     showSight: true,
     checked: false,
-    history: (stored?.history ?? []).map(h => ({ placement: h.placement, marks: new Set(h.marks) })),
+    history: (stored?.history ?? []).map(h => ({ placement: h.placement, safe: h.safe ?? -1, marks: new Set(h.marks) })),
     hints: stored?.hints ?? 0,
     won: false,
   };
-  game.drones = puzzle.statements.filter(st => st.type === 'drone').map((st, i) => ({ st, label: `D${i + 1}`, scan: droneScan(game.board, st.side, st.index) }));
   const firstFree = game.placement.indexOf(-1);
-  game.selected = firstFree >= 0 ? firstFree : 0;
-  game.won = firstFree < 0 && isSolved();
+  game.selected = firstFree >= 0 ? firstFree : SAFE_SEL;
+  game.won = complete() && isSolved();
   renderGame();
   if (intro) {
-    localStorage.setItem('ktozwinal:seenRules', '1');
+    localStorage.setItem(SEEN_RULES, '1');
     intro();
-  } else if (!localStorage.getItem('ktozwinal:seenRules')) {
-    localStorage.setItem('ktozwinal:seenRules', '1');
+  } else if (!localStorage.getItem(SEEN_RULES)) {
+    localStorage.setItem(SEEN_RULES, '1');
     showRules();
   }
 }
 
+const SAFE_SEL = -2;
+const complete = () => game.safe >= 0 && game.placement.every(c => c >= 0);
+// The player's map: with the safe where the player put it (it blocks sight and drones), else without it.
+const playMap = () => (game.safe >= 0 ? withSafe(game.puzzle, game.safe) : game.puzzle);
+const playBoard = () => getBoard(playMap());
+const drones = () => game.puzzle.statements.filter(st => st.type === 'drone').map((st, i) => ({ st, label: `D${i + 1}` }));
+// The next unplaced hero, else the safe if it is not placed.
+function nextSelection(skip) {
+  const next = game.placement.findIndex((c, i) => c < 0 && i !== skip);
+  if (next >= 0) return next;
+  return game.safe < 0 && skip !== SAFE_SEL ? SAFE_SEL : skip;
+}
+
 function snapshot() {
-  game.history.push({ placement: game.placement.slice(), marks: new Set(game.marks) });
+  game.history.push({ placement: game.placement.slice(), safe: game.safe, marks: new Set(game.marks) });
   if (game.history.length > 200) game.history.shift();
 }
 
 function onCell(cell) {
   if (game.won) return;
-  const { board, placement } = game;
+  const { placement } = game;
+  const board = getBoard(game.puzzle);
   const here = placement.indexOf(cell);
+  const onSafe = cell === game.safe;
   if (game.mode === 'mark') {
-    if (here >= 0 || !board.walk[cell]) return;
+    if (here >= 0 || onSafe || !board.walk[cell]) return;
     snapshot();
     if (game.marks.has(cell)) game.marks.delete(cell);
     else game.marks.add(cell);
     return afterChange();
+  }
+  if (onSafe) {
+    if (game.selected === SAFE_SEL) {
+      snapshot();
+      game.safe = -1;
+      return afterChange();
+    }
+    game.selected = SAFE_SEL;
+    return renderGame();
   }
   if (here >= 0) {
     if (here === game.selected) {
@@ -265,19 +293,20 @@ function onCell(cell) {
     game.selected = here;
     return renderGame();
   }
-  if (!board.walk[cell]) return toast('Tu nie da się stanąć.');
+  if (!board.walk[cell]) return toast(game.selected === SAFE_SEL ? 'Sejf stał na gołej ziemi.' : 'Tu nie da się stanąć.');
+  if (game.selected === SAFE_SEL && board.type[cell] !== 'ground') return toast('Sejf stał na gołej ziemi, nie w krzakach ani na wyrzutni.');
   snapshot();
-  placement[game.selected] = cell;
+  if (game.selected === SAFE_SEL) game.safe = cell;
+  else placement[game.selected] = cell;
   game.marks.delete(cell);
-  const next = placement.findIndex((c, i) => c < 0 && i !== game.selected);
-  if (next >= 0) game.selected = next;
+  game.selected = nextSelection(game.selected);
   afterChange();
 }
 
 function afterChange() {
   game.checked = false;
   save();
-  const all = game.placement.every(c => c >= 0);
+  const all = complete();
   if (all && isSolved()) {
     game.won = true;
     markSolved(key(game.seed, game.difficulty));
@@ -286,32 +315,50 @@ function afterChange() {
     return showWin();
   }
   renderGame();
-  if (all) toast('Wszyscy rozstawieni, ale coś się nie zgadza. Stuknij „Sprawdź”.');
+  if (all) toast('Wszystko rozstawione, ale coś się nie zgadza. Stuknij „Sprawdź”.');
 }
 
-// All statements true + R1 + R2 ⇔ the unique solution (the generator guarantees uniqueness).
+// All statements true + R1 + R2 on the map with the safe ⇔ the unique solution (the generator guarantees it).
 function isSolved() {
-  const { puzzle, placement } = game;
-  return isValidPlacement(puzzle, placement) && puzzle.statements.every(st => evaluate(puzzle, placement, st));
+  const map = playMap();
+  return isValidPlacement(map, game.placement) && game.puzzle.statements.every(st => evaluate(map, game.placement, st));
 }
 
+// Whether a statement can already be judged: its heroes are placed, and the safe too if the truth depends
+// on it (`sees`: the safe may hide or be the object seen).
 function evaluable(st) {
   const p = game.placement;
+  const safe = game.safe >= 0;
+  if (st.type === 'alarm') return safe;
+  if (st.type === 'sees' || SAFE_PAIR[st.type]) return safe && p[st.who] >= 0;
   if (UNARY.has(st.type)) return p[st.who] >= 0;
   if (PAIR.has(st.type)) return p[st.who] >= 0 && p[st.hero] >= 0;
+  if (st.type === 'drone') return safe && p.every(c => c >= 0);
   return p.every(c => c >= 0);
 }
 
 function falseStatements() {
-  const { puzzle, placement } = game;
-  return new Set(puzzle.statements.filter(st => evaluable(st) && !evaluate(puzzle, placement, st)));
+  const map = playMap();
+  return new Set(game.puzzle.statements.filter(st => evaluable(st) && !evaluate(map, game.placement, st)));
 }
 
+// Heroes who see each other. Before the safe is placed, a pair counts only if no free cell between them could
+// hold the hidden safe (it might be what hid them from each other).
 function conflicts() {
-  const { board, placement } = game;
+  const { placement, puzzle } = game;
+  const board = playBoard();
+  const n = puzzle.n;
+  const hideouts = game.safe >= 0 ? new Set() : new Set(safeCandidates(puzzle).filter(c => !placement.includes(c)));
+  const hidden = (a, b) => {
+    const [ra, ca, rb, cb] = [Math.floor(a / n), a % n, Math.floor(b / n), b % n];
+    for (let c = (ra === rb ? Math.min(ca, cb) : Math.min(ra, rb)) + 1; c < (ra === rb ? Math.max(ca, cb) : Math.max(ra, rb)); c++) {
+      if (hideouts.has(ra === rb ? ra * n + c : c * n + ca)) return true;
+    }
+    return false;
+  };
   const bad = new Set();
   placement.forEach((a, i) => placement.forEach((b, j) => {
-    if (i < j && a >= 0 && b >= 0 && board.seesSet[a].has(b)) { bad.add(i); bad.add(j); }
+    if (i < j && a >= 0 && b >= 0 && board.seesSet[a].has(b) && !hidden(a, b)) { bad.add(i); bad.add(j); }
   }));
   return bad;
 }
@@ -321,11 +368,17 @@ function check() {
   const problems = [];
   const bad = conflicts();
   if (bad.size) problems.push('ktoś kogoś widzi');
-  const thieves = game.placement.filter(c => c >= 0 && game.board.safeSpot[c]).length;
-  if (thieves > 1) problems.push('przy sejfie stoi więcej niż jedna osoba');
-  if (game.placement.every(c => c >= 0) && thieves === 0) problems.push('nikt nie stoi przy sejfie');
+  if (game.safe >= 0) {
+    const board = playBoard();
+    const thieves = game.placement.filter(c => c >= 0 && board.safeSpot[c]).length;
+    if (thieves > 1) problems.push('przy sejfie stoi więcej niż jedna osoba');
+    if (game.placement.every(c => c >= 0) && thieves === 0) problems.push('nikt nie stoi przy sejfie');
+  } else if (game.placement.every(c => c >= 0)) {
+    problems.push('sejf nie jest jeszcze postawiony');
+  }
   const wrong = falseStatements().size;
-  if (wrong) problems.push(`${wrong} ${wrong === 1 ? 'zeznanie się nie zgadza' : 'zeznania się nie zgadzają'}`);
+  const few = wrong % 10 >= 2 && wrong % 10 <= 4 && (wrong % 100 < 12 || wrong % 100 > 14);
+  if (wrong) problems.push(`${wrong} ${wrong === 1 ? 'zeznanie się nie zgadza' : few ? 'zeznania się nie zgadzają' : 'zeznań się nie zgadza'}`);
   renderGame();
   toast(problems.length ? `Problem: ${problems.join(', ')}.` : 'Na razie wszystko się zgadza.');
 }
@@ -334,6 +387,7 @@ function undo() {
   const last = game.history.pop();
   if (!last) return toast('Nie ma czego cofnąć.');
   game.placement = last.placement;
+  game.safe = last.safe;
   game.marks = last.marks;
   game.won = false;
   game.checked = false;
@@ -344,6 +398,7 @@ function undo() {
 function clearAll() {
   snapshot();
   game.placement = game.placement.map(() => -1);
+  game.safe = -1;
   game.marks.clear();
   game.selected = 0;
   game.won = false;
@@ -353,19 +408,23 @@ function clearAll() {
 function hint() {
   if (game.won) return toast('Sprawa jest już rozwiązana.');
   const { puzzle } = game;
-  const h = nextHint(puzzle, game.placement);
-  const hero = puzzle.heroes[h.hero];
+  const h = nextHint(puzzle, game.placement, game.safe);
+  // Hero index k of a hint is the safe (src/steps.js).
+  const isSafe = h.hero === puzzle.heroes.length;
+  const name = isSafe ? 'Sejf' : puzzle.heroes[h.hero]?.name;
+  if (h.kind === 'none') return toast('Brak podpowiedzi dla tego ustawienia.');
   game.hints++;
   save();
   if (h.kind === 'wrong') {
-    const o = overlay(`<h2>Podpowiedź</h2><p style="font-size:18px;text-align:center"><b>${esc(hero.name)}</b> stoi w złym miejscu.</p>
+    const o = overlay(`<h2>Podpowiedź</h2><p style="font-size:18px;text-align:center"><b>${esc(name)}</b> stoi w złym miejscu.</p>
       <div class="actions"><button class="btn ghost" data-a="ok">OK</button><button class="btn" data-a="go">Zdejmij</button></div>`);
     o.querySelector('[data-a="ok"]').onclick = () => o.remove();
     o.querySelector('[data-a="go"]').onclick = () => {
       o.remove();
       snapshot();
-      game.placement[h.hero] = -1;
-      game.selected = h.hero;
+      if (isSafe) game.safe = -1;
+      else game.placement[h.hero] = -1;
+      game.selected = isSafe ? SAFE_SEL : h.hero;
       afterChange();
     };
     return;
@@ -377,7 +436,7 @@ function hint() {
   const o = overlay(`<h2>Podpowiedź</h2>
     ${folded ? `<button class="btn small ghost hint-more" data-a="all">Pokaż wszystkie kroki (${h.chain.length})</button>` : ''}
     <ol class="hint-steps">${items}</ol>
-    <p style="font-size:18px;text-align:center">Więc <b>${esc(hero.name)}</b> stoi na polu <b>${cellName(puzzle, h.cell)}</b>.</p>
+    <p style="font-size:18px;text-align:center">Więc <b>${esc(isSafe ? 'sejf' : name)}</b> ${isSafe ? 'stał' : 'stoi'} na polu <b>${cellName(puzzle, h.cell)}</b>.</p>
     <div class="actions"><button class="btn ghost" data-a="ok">OK</button><button class="btn" data-a="go">Postaw</button></div>`);
   o.querySelector('[data-a="all"]')?.addEventListener('click', e => {
     o.querySelectorAll('.hint-steps li[hidden]').forEach(li => { li.hidden = false; });
@@ -387,10 +446,10 @@ function hint() {
   o.querySelector('[data-a="go"]').onclick = () => {
     o.remove();
     snapshot();
-    game.placement[h.hero] = h.cell;
+    if (isSafe) game.safe = h.cell;
+    else game.placement[h.hero] = h.cell;
     game.marks.delete(h.cell);
-    const next = game.placement.findIndex(c => c < 0);
-    if (next >= 0) game.selected = next;
+    game.selected = nextSelection(isSafe ? SAFE_SEL : h.hero);
     afterChange();
   };
 }
@@ -412,8 +471,14 @@ function heroToken(hero, x, y, { selected, conflict }) {
     `<text x="${x}" y="${y + 14}" text-anchor="middle" font-family="Lilita One, Arial Black, sans-serif" font-size="40" fill="#fff" stroke="${INK}" stroke-width="2.5" paint-order="stroke">${esc(hero.name[0])}</text>`;
 }
 
+function safeToken(x, y, selected) {
+  const sel = selected ? `<rect x="${x - 47}" y="${y - 47}" width="94" height="94" rx="16" fill="none" stroke="#ffc531" stroke-width="7"><animate attributeName="stroke-width" values="5;9;5" dur="1.2s" repeatCount="indefinite"/></rect>` : '';
+  return `${sel}<g transform="translate(${x - S / 2} ${y - S / 2})">${ART.safe}</g>`;
+}
+
 function boardSvg() {
-  const { puzzle, board, placement } = game;
+  const { puzzle, placement } = game;
+  const board = playBoard();
   const n = puzzle.n;
   const W = n * S + 2 * M;
   const parts = [];
@@ -448,9 +513,10 @@ function boardSvg() {
   }
   parts.push(`<path d="${segs.join(' ')}" stroke="${INK}" stroke-opacity="0.55" stroke-width="12" stroke-linecap="round"/>`);
   parts.push(`<path d="${segs.join(' ')}" stroke="#fff" stroke-width="6" stroke-dasharray="16 10" stroke-linecap="round"/>`);
-  // objects
+  // objects of the map (the placed safe is drawn as a token below)
+  const map = getBoard(puzzle);
   for (let i = 0; i < n * n; i++) {
-    const art = ART[board.type[i]];
+    const art = ART[map.type[i]];
     if (art) parts.push(`<g transform="translate(${x0(i % n)} ${y0(Math.floor(i / n))})">${art}</g>`);
   }
   // zone names (first cell of each zone)
@@ -460,6 +526,8 @@ function boardSvg() {
     const w = label.length * 11 + 14;
     parts.push(`<g transform="translate(${x0(i % n) + 4} ${y0(Math.floor(i / n)) + 4})"><rect width="${w}" height="24" rx="12" fill="#fff" stroke="${INK}" stroke-width="3"/><text x="${w / 2}" y="17" text-anchor="middle" font-family="Nunito, sans-serif" font-weight="800" font-size="15" fill="${INK}">${esc(label)}</text></g>`);
   });
+  // the safe the player placed
+  if (game.safe >= 0) parts.push(safeToken(x0(game.safe % n) + S / 2, y0(Math.floor(game.safe / n)) + S / 2, game.selected === SAFE_SEL));
   // marks
   for (const j of game.marks) {
     const x = x0(j % n), y = y0(Math.floor(j / n));
@@ -478,7 +546,7 @@ function boardSvg() {
     parts.push(`<text x="${x0(k) + S / 2}" y="${M - 12}" text-anchor="middle" font-family="Lilita One, sans-serif" font-size="26" fill="${INK}" opacity="0.6">${k + 1}</text>`);
     parts.push(`<text x="${M / 2}" y="${y0(k) + S / 2 + 9}" text-anchor="middle" font-family="Lilita One, sans-serif" font-size="26" fill="${INK}" opacity="0.6">${k + 1}</text>`);
   }
-  for (const d of game.drones) {
+  for (const d of drones()) {
     const i = d.st.index - 1;
     const pos = {
       N: [x0(i) + S / 2, M / 2], S: [x0(i) + S / 2, M + n * S + M / 2],
@@ -534,7 +602,17 @@ function renderGame() {
     card.onclick = () => { game.selected = h; game.mode = 'place'; renderGame(); };
     cards.appendChild(card);
   });
-  for (const d of game.drones) {
+  const alarms = puzzle.statements.filter(st => st.type === 'alarm');
+  const safeLines = alarms.length
+    ? alarms.map(st => `<p class="stmt ${wrong.has(st) ? 'bad' : ''}">${esc(statementText(puzzle, st))}</p>`).join('')
+    : `<p class="stmt silent">Ukryty. Ustal, na którym polu stał.</p>`;
+  const safeWhere = game.safe >= 0 ? `<span class="where">pole ${coord(game.safe, puzzle.n)}</span>` : '';
+  const safeCard = el(`<div class="card safe ${game.selected === SAFE_SEL ? 'selected' : ''} ${game.safe >= 0 ? 'placed' : ''}">
+    <div class="avatar safe-avatar">${icon('safe')}</div>
+    <div class="body"><div class="hero-name">Sejf${safeWhere}</div>${safeLines}</div></div>`);
+  safeCard.onclick = () => { game.selected = SAFE_SEL; game.mode = 'place'; renderGame(); };
+  cards.appendChild(safeCard);
+  for (const d of drones()) {
     cards.appendChild(el(`<div class="card drone"><div class="avatar">${d.label}</div><div class="body"><div class="hero-name">Nagranie z drona</div><p class="stmt ${wrong.has(d.st) ? 'bad' : ''}">${esc(droneText(d))}</p></div></div>`));
   }
   app.appendChild(cards);
@@ -563,10 +641,10 @@ function renderGame() {
 
 function showWin() {
   const { puzzle, placement } = game;
-  const thief = puzzle.heroes[thiefOf(puzzle, placement)];
+  const thief = puzzle.heroes[thiefOf(playMap(), placement)];
   const o = overlay(`<h2>Sprawa rozwiązana!</h2>
     <div class="avatar win-avatar" style="background:${color(thief)}">${esc(thief.name[0])}</div>
-    <p style="text-align:center;font-size:20px;font-weight:800">Sejf ${thief.gender === 'f' ? 'obrobiła' : 'obrobił'} <b>${esc(thief.name)}</b>!</p>
+    <p style="text-align:center;font-size:20px;font-weight:800">Sejf stał na polu ${cellName(puzzle, game.safe)}. ${thief.gender === 'f' ? 'Obrobiła' : 'Obrobił'} go <b>${esc(thief.name)}</b>!</p>
     <p style="text-align:center;font-weight:800">${game.hints ? `Podpowiedzi: ${game.hints}` : 'Bez żadnej podpowiedzi!'}</p>
     <div class="actions"><button class="btn ghost" data-a="stay">Zobacz planszę</button><button class="btn" data-a="home">Menu</button></div>`);
   o.querySelector('[data-a="stay"]').onclick = () => o.remove();
@@ -579,15 +657,18 @@ function icon(type) {
 
 function showRules() {
   const o = overlay(`<h2>Zasady</h2>
-    <p><b>Cel:</b> ustal, gdzie stał każdy bohater. Złodziejem jest ten, kto stał przy sejfie.</p>
+    <p><b>Cel:</b> ustal, gdzie stał każdy bohater i gdzie stał sejf. Złodziejem jest ten, kto stał przy sejfie.</p>
     <ul>
+      <li><b>Sejf jest ukryty:</b> nie ma go na mapie. Stał na jednym polu gołej ziemi, nikt na nim nie stał i zasłaniał widok jak przeszkoda. Postaw go sam, tak jak bohaterów.</li>
       <li>Każdy stał na innym wolnym polu: na ziemi, w krzakach albo na wyrzutni.</li>
-      <li><b>Nikt nikogo nie widział:</b> dwie osoby nie mogą stać w tym samym rzędzie ani kolumnie, chyba że między nimi jest przeszkoda (skrzynia, beczka, skała, sejf). Granice stref nie zasłaniają widoku.</li>
+      <li><b>Nikt nikogo nie widział:</b> dwie osoby nie mogą stać w tym samym rzędzie ani kolumnie, chyba że między nimi jest przeszkoda (skrzynia, beczka, skała albo sejf). Granice stref nie zasłaniają widoku.</li>
       <li><b>Przy sejfie</b> (pole tuż obok, w tej samej strefie) stała dokładnie jedna osoba: złodziej.</li>
       <li>„Obok” = tuż nad, pod, z lewej lub z prawej, w tej samej strefie.</li>
       <li>„Widziałem X” = patrząc w którąś z 4 stron, pierwszą przeszkodą był X.</li>
       <li>„Gdzieś na północ od” = w dowolnym rzędzie wyżej (kolumna bez znaczenia).</li>
-      <li>Dron patrzy wzdłuż rzędu lub kolumny od krawędzi aż do pierwszej przeszkody.</li>
+      <li>„Gdzieś na północ od sejfu” = w dowolnym rzędzie wyżej niż sejf.</li>
+      <li>Dron patrzy wzdłuż rzędu lub kolumny od krawędzi aż do pierwszej przeszkody (także sejfu).</li>
+      <li>Alarm podaje strefę, w której stał sejf.</li>
       <li>Wszystkie zeznania są prawdziwe. Rozwiązanie jest dokładnie jedno.</li>
     </ul>
     <div class="legend">
@@ -596,18 +677,19 @@ function showRules() {
       ${icon('crate')}<span>Skrzynia: przeszkoda</span>
       ${icon('barrel')}<span>Beczka: przeszkoda</span>
       ${icon('rock')}<span>Skała: przeszkoda</span>
-      ${icon('safe')}<span>Sejf: przeszkoda, przy nim stał złodziej</span>
+      ${icon('safe')}<span>Sejf: ustawiasz go sam; zasłania widok, przy nim stał złodziej</span>
     </div>
-    <p><b>Sterowanie:</b> wybierz bohatera z listy i stuknij pole. Stuknij go jeszcze raz, żeby zdjąć. Tryb „Krzyżyk” zaznacza pola wykluczone. Czerwone pola to miejsca widziane przez postawionych bohaterów.</p>
+    <p><b>Sterowanie:</b> wybierz bohatera albo sejf z listy i stuknij pole. Stuknij jeszcze raz, żeby zdjąć. Tryb „Krzyżyk” zaznacza pola wykluczone. Czerwone pola to miejsca widziane przez postawionych bohaterów (sejf, jeśli go postawisz, zasłania widok).</p>
     <div class="actions"><button class="btn" data-a="ok">Gramy!</button></div>`);
   o.querySelector('[data-a="ok"]').onclick = () => o.remove();
 }
 
 function showTutorial() {
   const o = overlay(`<h2>Samouczek</h2>
-    <p>Ktoś obrobił sejf. Na mapie stały 4 osoby, a Twoim zadaniem jest ustalić, kto gdzie stał.</p>
+    <p>Ktoś obrobił sejf. Na mapie stały 4 osoby, a Twoim zadaniem jest ustalić, kto gdzie stał i gdzie stał sejf.</p>
     <ul>
-      <li><b>Nikt nikogo nie widział:</b> dwie osoby nie stoją w jednym rzędzie ani kolumnie, chyba że dzieli je przeszkoda.</li>
+      <li><b>Sejf jest ukryty:</b> stał na jednym polu gołej ziemi i zasłaniał widok jak przeszkoda. Alarm mówi, w której strefie. Gdy go znajdziesz, wybierz „Sejf” z listy i postaw go.</li>
+      <li><b>Nikt nikogo nie widział:</b> dwie osoby nie stoją w jednym rzędzie ani kolumnie, chyba że dzieli je przeszkoda (także sejf).</li>
       <li>Przy sejfie (tuż obok, w tej samej strefie) stała dokładnie jedna osoba: złodziej.</li>
       <li>Każde zeznanie jest prawdziwe. Zacznij od Miry: stała w krzakach, a krzaki są tylko dwa.</li>
       <li>Nie wiesz, co dalej? Stuknij „Podpowiedź”: zobaczysz tok rozumowania krok po kroku.</li>

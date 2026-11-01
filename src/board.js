@@ -1,5 +1,7 @@
 // Board geometry derived from a puzzle (RULES.md §1, §3, §5.1, §5.2). Cell index = r * n + c.
 // Zone borders only limit neighbourhood; sight and drones are blocked by blocking cells alone.
+// A puzzle's map has no safe (it is hidden); `withSafe` gives the map with the safe in place, on which
+// every rule and statement is evaluated.
 export const WALKABLE_TYPES = ['ground', 'bush', 'pad'];
 export const OBSTACLE_TYPES = ['crate', 'barrel', 'rock'];
 export const BLOCKING_TYPES = [...OBSTACLE_TYPES, 'safe'];
@@ -8,6 +10,26 @@ export const SIDES = ['N', 'S', 'W', 'E'];
 const DIRS = [[-1, 0], [1, 0], [0, -1], [0, 1]];
 // Keyed by the cells array so `{ ...puzzle, statements }` copies share one board.
 const cache = new WeakMap();
+const safeMaps = new WeakMap();
+
+// The puzzle on the map with the safe in place (RULES.md §1); copies of one puzzle share the map per cell.
+export function withSafe(puzzle, safe) {
+  let maps = safeMaps.get(puzzle.cells);
+  if (!maps) safeMaps.set(puzzle.cells, maps = new Map());
+  let cells = maps.get(safe);
+  if (!cells) {
+    const r = Math.floor(safe / puzzle.n), c = safe % puzzle.n;
+    cells = puzzle.cells.map((row, i) => (i === r ? row.map((t, j) => (j === c ? 'safe' : t)) : row));
+    maps.set(safe, cells);
+  }
+  return { ...puzzle, cells };
+}
+
+// Ground cells the safe can stand on: a cell without walkable neighbours admits no solution (R2).
+export function safeCandidates(puzzle) {
+  const board = getBoard(puzzle);
+  return board.walkCells.filter(s => board.type[s] === 'ground' && getBoard(withSafe(puzzle, s)).safeSpots.length > 0);
+}
 
 export function getBoard(puzzle) {
   let b = cache.get(puzzle.cells);
@@ -67,7 +89,7 @@ function buildBoard(puzzle) {
   }
 
   const safe = type.indexOf('safe');
-  const safeSpots = neighbours[safe].filter(j => walk[j]);
+  const safeSpots = safe < 0 ? [] : neighbours[safe].filter(j => walk[j]);
   const safeSpot = new Array(size).fill(false);
   for (const j of safeSpots) safeSpot[j] = true;
 

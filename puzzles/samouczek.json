@@ -1,5 +1,5 @@
 {
- "version": 1,
+ "version": 2,
  "seed": "samouczek",
  "difficulty": "easy",
  "n": 4,
@@ -12,7 +12,7 @@
   ],
   [
    "ground",
-   "safe",
+   "ground",
    "ground",
    "ground"
   ],
@@ -83,26 +83,35 @@
  ],
  "statements": [
   {
-   "type": "westOf",
-   "who": 0,
-   "hero": 1
-  },
-  {
    "type": "on",
-   "who": 1,
-   "cellType": "bush"
+   "cellType": "bush",
+   "who": 1
   },
   {
-   "type": "notInZone",
-   "who": 2,
-   "zone": 0
+   "type": "nextTo",
+   "cellType": "rock",
+   "who": 2
+  },
+  {
+   "type": "sees",
+   "cellType": "safe",
+   "who": 2
   },
   {
    "type": "westOf",
    "who": 3,
-   "hero": 0
+   "hero": 1
+  },
+  {
+   "type": "northOfSafe",
+   "who": 3
+  },
+  {
+   "type": "alarm",
+   "zone": 0
   }
  ],
+ "safe": 5,
  "solution": [
   6,
   15,
@@ -112,7 +121,7 @@
  "thief": 0,
  "grade": {
   "level": 2,
-  "steps": 12
+  "steps": 14
  },
  "id": "samouczek",
  "title": "Samouczek"

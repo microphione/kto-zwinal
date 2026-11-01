@@ -1,19 +1,35 @@
 {
- "version": 1,
+ "version": 2,
  "seed": "misja-2",
  "difficulty": "medium",
  "n": 6,
  "cells": [
   [
-   "bush",
    "ground",
-   "rock",
-   "pad",
+   "crate",
    "ground",
-   "safe"
+   "ground",
+   "ground",
+   "ground"
   ],
   [
+   "crate",
    "rock",
+   "ground",
+   "ground",
+   "bush",
+   "ground"
+  ],
+  [
+   "ground",
+   "ground",
+   "ground",
+   "ground",
+   "pad",
+   "ground"
+  ],
+  [
+   "bush",
    "ground",
    "crate",
    "ground",
@@ -21,167 +37,170 @@
    "ground"
   ],
   [
-   "crate",
    "ground",
-   "ground",
-   "ground",
-   "ground",
-   "barrel"
-  ],
-  [
-   "ground",
-   "pad",
-   "ground",
-   "ground",
-   "ground",
-   "ground"
-  ],
-  [
-   "ground",
-   "ground",
-   "ground",
-   "ground",
-   "ground",
-   "ground"
-  ],
-  [
    "ground",
    "bush",
    "ground",
-   "rock",
    "ground",
-   "bush"
+   "ground"
+  ],
+  [
+   "bush",
+   "rock",
+   "barrel",
+   "ground",
+   "ground",
+   "ground"
   ]
  ],
  "zones": [
   [
-   1,
-   1,
    2,
    2,
    2,
-   2
+   2,
+   2,
+   3
   ],
   [
    1,
    2,
    2,
-   0,
    2,
-   2
+   2,
+   3
   ],
   [
    1,
-   2,
-   0,
-   0,
-   0,
-   0
+   1,
+   1,
+   1,
+   3,
+   3
   ],
   [
+   1,
+   1,
+   1,
    3,
    3,
-   0,
-   0,
-   0,
-   0
+   3
   ],
   [
-   3,
-   3,
-   3,
+   1,
    0,
    0,
-   0
+   0,
+   0,
+   3
   ],
   [
-   3,
-   3,
-   3,
-   3,
-   3,
+   0,
+   0,
+   0,
+   0,
+   0,
    3
   ]
  ],
  "zoneNames": [
-  "Baza",
-  "Kanion",
   "Wulkan",
-  "Plaża"
+  "Baza",
+  "Oaza",
+  "Ruiny"
  ],
  "heroes": [
-  {
-   "name": "Grot",
-   "gen": "Grota",
-   "gender": "m"
-  },
   {
    "name": "Bobo",
    "gen": "Bobo",
    "gender": "m"
   },
   {
-   "name": "Zyg",
-   "gen": "Zyga",
-   "gender": "m"
-  },
-  {
-   "name": "Mira",
-   "gen": "Miry",
+   "name": "Lumi",
+   "gen": "Lumi",
    "gender": "f"
   },
   {
    "name": "Tesa",
    "gen": "Tesy",
    "gender": "f"
+  },
+  {
+   "name": "Rufi",
+   "gen": "Rufiego",
+   "gender": "m"
+  },
+  {
+   "name": "Mira",
+   "gen": "Miry",
+   "gender": "f"
   }
  ],
  "statements": [
   {
-   "type": "inZone",
-   "zone": 0,
-   "who": 0
+   "type": "otherZone",
+   "who": 0,
+   "hero": 4
   },
   {
-   "type": "row",
-   "n": 5,
-   "who": 0
+   "type": "eastOf",
+   "who": 0,
+   "hero": 3
+  },
+  {
+   "type": "inZone",
+   "zone": 0,
+   "who": 1
+  },
+  {
+   "type": "northOfSafe",
+   "who": 1
+  },
+  {
+   "type": "inZone",
+   "zone": 0,
+   "who": 2
   },
   {
    "type": "on",
    "cellType": "bush",
-   "who": 1
-  },
-  {
-   "type": "southOf",
-   "who": 1,
-   "hero": 4
-  },
-  {
-   "type": "sees",
-   "cellType": "barrel",
    "who": 2
   },
   {
    "type": "nextTo",
-   "cellType": "crate",
+   "cellType": "rock",
    "who": 3
   },
   {
+   "type": "southOf",
+   "who": 3,
+   "hero": 4
+  },
+  {
+   "type": "inZone",
+   "zone": 3,
+   "who": 4
+  },
+  {
    "type": "drone",
-   "side": "E",
-   "index": 2,
-   "n": 0
+   "side": "W",
+   "index": 3,
+   "n": 1
   }
  ],
+ "safe": 34,
  "solution": [
-  27,
-  35,
-  14,
-  7,
-  4
+  15,
+  28,
+  30,
+  8,
+  5
  ],
- "thief": 4,
+ "thief": 1,
+ "grade": {
+  "level": 2,
+  "steps": 25
+ },
  "id": "misja-2",
  "title": "Akcja w bazie"
 }

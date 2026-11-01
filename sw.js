@@ -1,6 +1,6 @@
 // Offline support. Same-origin files: network first (revalidated, so GitHub Pages' max-age never serves a
 // stale file and all modules come from one deploy), the cache only when offline. Web fonts: cache first.
-const CACHE = 'ktozwinal-v1';
+const CACHE = 'ktozwinal-v2';
 const FONTS = 'ktozwinal-fonts';
 const SHELL = [
   './', 'index.html', 'manifest.webmanifest', 'css/style.css',

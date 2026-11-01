@@ -1,28 +1,14 @@
 {
- "version": 1,
+ "version": 2,
  "seed": "misja-1",
  "difficulty": "easy",
  "n": 5,
  "cells": [
   [
-   "crate",
-   "ground",
-   "barrel",
-   "ground",
-   "ground"
-  ],
-  [
-   "barrel",
-   "ground",
-   "safe",
-   "ground",
-   "ground"
-  ],
-  [
    "ground",
    "ground",
-   "pad",
-   "pad",
+   "ground",
+   "rock",
    "ground"
   ],
   [
@@ -30,78 +16,92 @@
    "ground",
    "ground",
    "bush",
+   "pad"
+  ],
+  [
+   "bush",
+   "barrel",
+   "ground",
+   "ground",
    "ground"
   ],
   [
    "ground",
+   "ground",
+   "ground",
+   "ground",
+   "rock"
+  ],
+  [
+   "ground",
+   "bush",
    "barrel",
    "ground",
-   "ground",
-   "bush"
+   "ground"
   ]
  ],
  "zones": [
   [
    0,
    0,
-   1,
-   1,
-   1
+   2,
+   2,
+   2
   ],
   [
    0,
-   0,
-   1,
-   1,
-   1
-  ],
-  [
-   0,
-   0,
-   1,
-   1,
-   1
-  ],
-  [
-   0,
-   0,
-   0,
+   2,
+   2,
    2,
    2
   ],
   [
+   0,
+   0,
+   1,
    2,
-   2,
-   2,
-   2,
-   2
+   1
+  ],
+  [
+   0,
+   0,
+   1,
+   1,
+   1
+  ],
+  [
+   1,
+   1,
+   1,
+   1,
+   1
   ]
  ],
  "zoneNames": [
-  "Kanion",
-  "Las",
-  "Baza"
+  "Plaża",
+  "Wulkan",
+  "Oaza"
  ],
  "heroes": [
-  {
-   "name": "Kora",
-   "gen": "Kory",
-   "gender": "f"
-  },
   {
    "name": "Mira",
    "gen": "Miry",
    "gender": "f"
   },
   {
-   "name": "Rufi",
-   "gen": "Rufiego",
+   "name": "Zyg",
+   "gen": "Zyga",
    "gender": "m"
   },
   {
-   "name": "Tesa",
-   "gen": "Tesy",
+   "name": "Lumi",
+   "gen": "Lumi",
    "gender": "f"
+  },
+  {
+   "name": "Grot",
+   "gen": "Grota",
+   "gender": "m"
   }
  ],
  "statements": [
@@ -111,33 +111,46 @@
    "who": 0
   },
   {
-   "type": "sees",
-   "cellType": "barrel",
+   "type": "eastOfSafe",
    "who": 0
   },
   {
-   "type": "inZone",
-   "zone": 1,
+   "type": "on",
+   "cellType": "bush",
    "who": 1
   },
   {
-   "type": "on",
-   "cellType": "pad",
+   "type": "nextTo",
+   "cellType": "barrel",
    "who": 2
   },
   {
-   "type": "sees",
-   "cellType": "safe",
-   "who": 3
+   "type": "notInZone",
+   "zone": 1,
+   "who": 2
+  },
+  {
+   "type": "southOf",
+   "who": 3,
+   "hero": 1
+  },
+  {
+   "type": "alarm",
+   "zone": 2
   }
  ],
+ "safe": 7,
  "solution": [
-  24,
-  3,
-  12,
-  6
+  8,
+  10,
+  16,
+  24
  ],
- "thief": 2,
+ "thief": 0,
+ "grade": {
+  "level": 2,
+  "steps": 12
+ },
  "id": "misja-1",
  "title": "Pierwszy skok"
 }

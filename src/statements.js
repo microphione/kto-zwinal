@@ -1,8 +1,14 @@
-// Statement semantics (RULES.md §5) and enumeration of the true statements for a placement.
+// Statement semantics (RULES.md §5) and enumeration of the true statements for a placement. Every function
+// here takes the puzzle on the map with the safe in place (board.js `withSafe`).
 import { getBoard, droneScan, OBSTACLE_TYPES, BLOCKING_TYPES, SIDES } from './board.js';
 
-// Truth depends only on the subject's cell.
-export const UNARY = new Set(['inZone', 'notInZone', 'on', 'nextTo', 'notNextTo', 'sees', 'row', 'col']);
+// Hero vs the safe, as the direction / zone pair statement they mirror.
+export const SAFE_PAIR = {
+  northOfSafe: 'northOf', southOfSafe: 'southOf', westOfSafe: 'westOf', eastOfSafe: 'eastOf',
+  sameZoneSafe: 'sameZone', otherZoneSafe: 'otherZone',
+};
+// Truth depends only on the subject's cell (and on the safe).
+export const UNARY = new Set(['inZone', 'notInZone', 'on', 'nextTo', 'notNextTo', 'sees', 'row', 'col', ...Object.keys(SAFE_PAIR)]);
 // Truth depends on the subject's and one other hero's cell.
 export const PAIR = new Set(['northOf', 'southOf', 'westOf', 'eastOf', 'sameZone', 'otherZone']);
 // Truth depends on every hero in the subject's zone.
@@ -19,6 +25,7 @@ export function unaryHolds(board, st, cell) {
     case 'row': return board.row(cell) === st.n;
     case 'col': return board.col(cell) === st.n;
   }
+  if (SAFE_PAIR[st.type]) return pairHolds(board, { type: SAFE_PAIR[st.type] }, cell, board.safe);
   throw new Error(`not a unary statement: ${st.type}`);
 }
 
@@ -40,6 +47,7 @@ export function evaluate(puzzle, placement, st) {
     const scan = droneScan(board, st.side, st.index);
     return placement.filter(cell => scan.includes(cell)).length === st.n;
   }
+  if (st.type === 'alarm') return board.zone[board.safe] === st.zone;
   const cell = placement[st.who];
   if (UNARY.has(st.type)) return unaryHolds(board, st, cell);
   if (PAIR.has(st.type)) return pairHolds(board, st, cell, placement[st.hero]);
@@ -79,6 +87,7 @@ export function trueStatements(puzzle, placement) {
   for (const t of OBSTACLE_TYPES) unaryCandidates.push({ type: 'nextTo', cellType: t }, { type: 'notNextTo', cellType: t });
   for (const t of BLOCKING_TYPES) unaryCandidates.push({ type: 'sees', cellType: t });
   for (let x = 1; x <= board.n; x++) unaryCandidates.push({ type: 'row', n: x }, { type: 'col', n: x });
+  for (const type of Object.keys(SAFE_PAIR)) unaryCandidates.push({ type });
   const informative = unaryCandidates.filter(st => {
     const hits = board.walkCells.filter(cell => unaryHolds(board, st, cell)).length;
     return hits > 0 && hits < board.walkCells.length;
@@ -104,6 +113,7 @@ export function trueStatements(puzzle, placement) {
       out.push({ type: 'drone', side, index, n: placement.filter(cell => scan.includes(cell)).length });
     }
   }
+  out.push({ type: 'alarm', zone: board.zone[board.safe] });
   return out;
 }
 

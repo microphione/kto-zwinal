@@ -134,6 +134,7 @@ svg.board .cell { cursor: pointer; }
 .stmt.silent { color: #8a7fa8; font-style: italic; }
 .stmt.bad { color: #d62839; text-decoration: underline wavy; }
 .card.drone .avatar { background: #59c3c3; border-radius: 12px; }
+.card.safe .avatar { background: #ffe8a3; border-radius: 12px; }
 
 .toast {
   position: fixed;

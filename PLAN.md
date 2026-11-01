@@ -317,6 +317,95 @@ reviewed; all four E2E suites OK. MINOR: one run of the 4×-throttle timing chec
 other E2E runs, 3 reruns OK (72–182 ms) — machine noise, recorded. Stages 2c–7 done except the owner's phone test.
 Elapsed for the owner go (2c → 7): ~4.5 h (P50 5.5 h).
 
+## Stage 8 — Hidden safe `[x]` (owner request 2026-11-01; deploy pending the owner's go)
+
+Owner: the safe's location must be deduced too, not only the thief. Owner asked to copy Murdoku's exact
+rules from murdoku.com — declined (the game must stay an original design, not a recreation); offered two
+original variants, owner chose **"Ukryty sejf (skrytka)"**: the safe is not shown, it stood on one empty
+cell and, as a blocking object, hid the view — so its position changes who could see whom. This replaces
+the design-table row "the safe is a fixed, visible object".
+
+Rules (normative text goes to `RULES.md` v2):
+- The hidden safe stands on exactly one `ground` cell; nobody stands on it; it blocks sight and drone scans.
+- R1 on the board with the safe in place; R2: exactly one hero is a neighbour (same zone) of the safe → thief.
+- Solution = hero placement + safe cell. The player places the heroes and the safe token.
+- New statements: hero vs safe direction (`northOfSafe` … „gdzieś na północ od sejfu”), `sameZoneSafe` /
+  `otherZoneSafe`, global `alarm` („Alarm: sejf stał w strefie Z”, ≤ 1 per puzzle). `sees safe` and drones
+  now depend on the hidden safe. Still no `nextTo safe` (would name the thief).
+- Puzzle contract v2: `version: 2`, `cells` without `safe`, `safe` = hidden cell, `solution`, `thief`, `grade`.
+  Storage namespace bumped so v1 progress is ignored; missions, tutorial and RULES examples are rebuilt.
+
+| | P50 | P80 |
+|---|---|---|
+| Calendar time (critical path 8a → 8b → 8c → 8d → 8e → 8f) | 7 h | 10 h |
+| Agent effort (incl. review, reference and verification agents) | 9 h | 13 h |
+
+P80 risks: generation time (every uniqueness proof now runs over all candidate safe cells), step solver
+needing the trial technique too often for easy/medium, rewriting the examples and tutorial by hand.
+Sequential: no agent runs alongside the main session on the same scope.
+
+- [x] **8a Spec** — `RULES.md` v2 (main session); review for ambiguity by 1 `sonnet` worker (read-only).
+  Evidence: review returned 18 items (9 MUST); all applied: "map with the safe in place" defines walkable,
+  safe cells without `safeSpots` admit no solution, drone truth `= n` (value ≥ 2 → false), parameter ranges,
+  `Cand` defines Q5 (implied by Q1 + Q2), generator conventions moved to §6 (empty-scan drone is a design
+  choice, not implied by Q2), Q3 marked outside the reference semantics. §7 examples removed until 8e.
+- [x] **8b Independent reference** — `tests/reference.js` rewritten from `RULES.md` v2 only by 1 `sonnet`
+  worker (no access to `src/`), brute force over safe cell + placements. Evidence: worker self-check 38 hand
+  cases `ALL OK`; API `refEval/refValid/refThief(puzzle, safe, placement, …)`, `refSolve`, `refCandidates`,
+  `refInformative`; worst enumeration 8×8 / 3 heroes ≈ 0.5 s.
+- [x] **8c Logic core** — `board.js` `withSafe` (cached map per safe cell, so boards are cached too) and
+  `safeCandidates`; `statements.js` `SAFE_PAIR` kinds as unary on the map with the safe, `alarm`;
+  `solver.js` `solveHidden` (shared node budget); generator v2 (`version: 2`, `safe` field, `placeSafe` with
+  ≥ 2 safe spots, zones keep ≥ 3 walkable cells, ≤ 1 alarm, families `safeDir`/`safeZone`/`alarm`).
+  Evidence: `node --test tests/solver.test.js` 9/9 vs the reference (random candidates, solution sets on
+  300 small + 40 large boards, limits/budgets, Q5 of the safe kinds); `tests/generator.test.js` 6/6 (Q1 via
+  `solveHidden` + brute force for all easy, Q2, Q4, Q5 via `refInformative` on easy seeds 1–5, every clue
+  family ≥ 3 in 40 hard puzzles). Generation (5 seeds): easy median 95 ms, medium 186 ms, hard 1.2 s,
+  expert 1.8 s (max 5.2 s).
+- [x] **8d Step solver** — variable k = the safe; hero–safe statements as pairs with the safe; `together`
+  (some remaining safe cell hides the line and is not next to both); `fixed` re-applied when the safe's
+  domain shrinks; R2 narrows the safe (`thief:safe`); per-safe drone scans (`drone:safe`); new `hiding`
+  (L2: two heroes with ≤ 16 cell pairs → the safe must hide them); trial over the safe too; `nextHint(…, safe)`
+  returns hero k for the safe. Texts in `text.js`. Evidence: `tests/steps.test.js` soundness on random and
+  satisfiable sets (heroes and the safe never lose a solution cell, contradiction only without solutions),
+  generated puzzles solved + graded + hint play for heroes and the safe — pass; shipped puzzles fail until
+  8e rebuilds them (v1 data).
+- [x] **8e UI and data** — `ui/app.js`: "Sejf" card (alarm shown on it), safe token placed only on ground
+  (toast otherwise), second tap removes it, undo/clear/save include it; sight shading, conflicts, drones and
+  the check on the map with the placed safe; statements needing the safe are judged only once it is placed;
+  check says „sejf nie jest jeszcze postawiony”; hints for the safe (wrong safe → „Zdejmij”, „Więc sejf stał
+  na polu …”); win „Sejf stał na polu X. Obrobił(a) go Y!”; rules and tutorial texts; storage namespace
+  `ktozwinal2:` (v1 keys removed on load); SW cache `ktozwinal-v2`. Data: RULES §7/§8 rebuilt (hidden safe,
+  hand deduction checked against the step log), `tests/fixtures/examples.js`, `puzzles/samouczek.json`
+  (= example 1, grade 2/14), missions re-frozen as v2 from the same seeds (v1 files deleted on purpose).
+  Solver speed-up: per-board caches of block/zone masks, unary masks and pair tables (expert generation
+  median 1.8 s → 0.5 s, identical output). Evidence: `npm test` 32/32 (50 s); E2E
+  `scratchpad/e2e-safe.mjs` in Chrome 25/25 OK, no console errors (safe refused on bush/crate, sight shading
+  2 cells with the safe vs 4 without, undo, win text, wrong-safe hint, medium/expert solved by hints with a
+  reload in between). Deploy only on the owner's go.
+- [x] **8f Verification** — two independent flows (opus orchestrators × 2 workers), fixes, re-verification, E2E.
+  - [x] Two flows (Workflow `verify-hidden-safe`, 9 agents: 2 × (opus split + 2 sonnet workers + opus consolidate) +
+    opus comparison; flow B independent until the comparison). Both: no logic defect — evaluators vs reference
+    ≈ 1.6 M + 62 k cases, `solveHidden` = brute force (700 + 51 large boards), step solver sound on > 18 k runs,
+    1 990 hints all justified, shipped puzzles unique (misja-2 by brute force), `npm test` 32/32.
+  - [x] Fixes after reconciling both reports: (1, medium) `ui/app.js` `conflicts()` reported heroes hidden by the not
+    yet placed safe as „ktoś kogoś widzi” (5/20 generated cases) → before the safe is placed a pair counts only if no
+    free safe candidate lies between them; (2) placed safe drawn twice → objects drawn from the map without the
+    safe; (3) plural „N zeznań się nie zgadza”; (4) drone label `D1, D2…` in `statementText` (was `DS3`), RULES §8;
+    (5) step text: effects as sentences, safe-only `fixed` step „X stoi na polu …, więc sejf tam nie stał”;
+    (6) RULES §6 documents ≥ 2 safe spots and ≥ 3 walkable cells per zone; (7) freeze script comment.
+    Rejected: `stepSolve` TypeError for a non-candidate safe fact (unreachable: `nextHint` returns `wrong` first;
+    no validation for impossible input), `hiding`/`between` text (flow B disproved it), reverse direction pairs in
+    `allowed` (Q2 removes them). Evidence: `npm test` 32/32; E2E 30/30 OK incl. the hidden-pair case `vA2-4`
+    (no false conflict, solved after placing the safe), a real adjacent conflict still reported, safe drawn once.
+  - [x] Re-verification of the fixes (Workflow `reverify-hidden-safe-fixes`: opus orchestrator + 2 sonnet workers):
+    F1–F7 correct (conflicts: 10 720 placements × safe states, 0 violations, mutants caught; plurals N = 1..30;
+    drone labels on generated + shipped puzzles; 7 528 step texts + 5 530 hint-chain texts clean). Remaining notes:
+    before the safe is placed the check judges each pair separately, so two pairs needing two different hiding
+    cells are not reported (no false reports; the win check is exact) — accepted; redundant safe-only step text
+    shortened to „X stoi na polu …”. `tests/steps.test.js` 8/8 after that edit.
+  - Not done: real-phone test; deploy waits for the owner's go.
+
 ## Checkpoint log
 
 - 2026-10-31 — Stage 0 done; plan created. Next: stage 1 (`RULES.md`).
