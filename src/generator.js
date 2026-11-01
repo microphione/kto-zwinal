@@ -1,13 +1,14 @@
 // Procedural boards and puzzles satisfying RULES.md Q1–Q5 (Q3 via the step solver, src/steps.js).
 import { createRng } from './rng.js';
-import { getBoard, withSafe, OBSTACLE_TYPES } from './board.js';
+import { getBoard, safeOf, OBSTACLE_TYPES } from './board.js';
 import { trueStatements, isValidPlacement, thiefOf, evaluate } from './statements.js';
-import { solveHidden } from './solver.js';
+import { solve } from './solver.js';
 import { stepSolve } from './steps.js';
 import { HERO_ROSTER, ZONE_NAMES } from './text.js';
 
-export const PUZZLE_VERSION = 2;
+export const PUZZLE_VERSION = 3;
 
+// heroes = n − 1 (RULES.md §2). drones: drone hints the player may send (RULES.md §7, not statements).
 // maxLevel: hardest step-solver technique allowed (3 = one refuted assumption, hard and expert only).
 export const DIFFICULTIES = {
   easy: { n: 5, heroes: 4, zones: 3, drones: 0, obstacles: 0.16, maxLevel: 2 },
@@ -28,7 +29,7 @@ const PROOF_NODES = 400000;
 const WEIGHT = {
   inZone: 1, notInZone: 1.2, on: 1.2, nextTo: 1, notNextTo: 1, sees: 1, row: 0.3, col: 0.3,
   northOf: 0.8, southOf: 0.8, westOf: 0.8, eastOf: 0.8, sameZone: 0.7, otherZone: 1.2,
-  alone: 0.8, zoneCount: 0.6, drone: 1,
+  alone: 0.8, zoneCount: 0.6,
   northOfSafe: 0.8, southOfSafe: 0.8, westOfSafe: 0.8, eastOfSafe: 0.8, sameZoneSafe: 0.9, otherZoneSafe: 1.1,
   alarm: 0.6,
 };
@@ -39,7 +40,7 @@ const DIVERSITY = 0.8;
 export const FAMILY = {
   inZone: 'zone', notInZone: 'zone', on: 'cell', nextTo: 'next', notNextTo: 'next', sees: 'sees',
   row: 'line', col: 'line', northOf: 'dir', southOf: 'dir', westOf: 'dir', eastOf: 'dir',
-  sameZone: 'pair', otherZone: 'pair', alone: 'count', zoneCount: 'count', drone: 'drone',
+  sameZone: 'pair', otherZone: 'pair', alone: 'count', zoneCount: 'count',
   northOfSafe: 'safeDir', southOfSafe: 'safeDir', westOfSafe: 'safeDir', eastOfSafe: 'safeDir',
   sameZoneSafe: 'safeZone', otherZoneSafe: 'safeZone', alarm: 'alarm',
 };
@@ -107,70 +108,69 @@ export function generateBoard(rng, cfg) {
   }
 }
 
-// The hidden safe's cell: ground with at least two walkable neighbours, so R2 picks among several cells.
-export function placeSafe(rng, puzzle) {
+const PLACE_TRIES = 200;
+// Random N pieces, one per row and column, on walkable cells; one of them is the safe (ground, at least 2
+// thief spots) and exactly one hero stands on a thief spot (R0–R2). Returns the hero placement or null.
+export function placeHeroes(rng, puzzle) {
   const board = getBoard(puzzle);
-  const cells = board.walkCells.filter(s => board.type[s] === 'ground' && getBoard(withSafe(puzzle, s)).safeSpots.length >= 2);
-  return cells.length ? rng.pick(cells) : -1;
-}
-
-// Random greedy placement satisfying R1 and R2 on the map with the safe in place, or null (the caller retries).
-export function placeHeroes(rng, puzzle, k) {
-  const board = getBoard(puzzle);
-  const placement = [rng.pick(board.safeSpots)];
-  for (const cell of rng.shuffle(board.walkCells)) {
-    if (placement.length === k) break;
-    if (board.safeSpot[cell] || placement.includes(cell)) continue;
-    if (placement.some(p => board.seesSet[p].has(cell))) continue;
-    placement.push(cell);
+  const { n } = board;
+  for (let i = 0; i < PLACE_TRIES; i++) {
+    const cols = rng.shuffle([...Array(n).keys()]);
+    const cells = cols.map((c, r) => r * n + c);
+    if (!cells.every(cell => board.walk[cell])) continue;
+    for (const safe of rng.shuffle(cells)) {
+      const spots = board.thiefSpots[safe];
+      if (board.type[safe] !== 'ground' || spots.length < 2) continue;
+      const placement = cells.filter(cell => cell !== safe);
+      if (placement.filter(cell => spots.includes(cell)).length === 1) return rng.shuffle(placement);
+    }
   }
-  return placement.length === k ? rng.shuffle(placement) : null;
+  return null;
 }
 
-function allowed(chosen, st, cfg) {
-  if (st.type === 'drone') return chosen.filter(x => x.type === 'drone').length < cfg.drones;
+function allowed(chosen, st) {
   if (st.type === 'alarm') return !chosen.some(x => x.type === 'alarm');
   if (chosen.filter(x => x.who === st.who).length >= MAX_PER_HERO) return false;
   if ((st.type === 'sameZone' || st.type === 'otherZone') && chosen.some(x => x.type === st.type && x.who === st.hero && x.hero === st.who)) return false;
   return true;
 }
 
-const solutionKey = s => `${s.safe}|${s.placement.join()}`;
-const holds = (puzzle, s, st) => evaluate(withSafe(puzzle, s.safe), s.placement, st);
+const solutionKey = placement => placement.join();
+const holds = (puzzle, placement, st) => evaluate(puzzle, placement, st);
 
-// Solutions { safe, placement } other than the hidden one, found by budgeted randomised searches. Returns []
-// only when a complete (non-aborted) search proved the solution unique, null when no proof fits the budget.
+// Solutions (placements) other than the hidden one, found by budgeted randomised searches. Returns [] only
+// when a complete (non-aborted) search proved the solution unique, null when no proof fits the budget.
 function sampleOthers(puzzle, statements, rng) {
-  const truth = solutionKey({ safe: puzzle.safe, placement: puzzle.solution });
+  const truth = solutionKey(puzzle.solution);
   const found = new Map();
   for (let i = 0; i < SAMPLE_RUNS; i++) {
-    const { solutions, aborted } = solveHidden({ ...puzzle, statements }, 2, rng, SAMPLE_NODES);
+    const { solutions, aborted } = solve({ ...puzzle, statements }, 2, rng, SAMPLE_NODES);
     for (const s of solutions) if (solutionKey(s) !== truth) found.set(solutionKey(s), s);
     if (found.size === 0 && !aborted) return [];
   }
   if (found.size > 0) return [...found.values()];
-  const exact = solveHidden({ ...puzzle, statements }, 2, null, PROOF_NODES);
+  const exact = solve({ ...puzzle, statements }, 2, null, PROOF_NODES);
   if (exact.aborted) return null;
   return exact.solutions.filter(s => solutionKey(s) !== truth);
 }
 
 // true / false when proven within the budget, null otherwise.
 function provenUnique(puzzle, statements) {
-  const { solutions, aborted } = solveHidden({ ...puzzle, statements }, 2, null, PROOF_NODES);
+  const { solutions, aborted } = solve({ ...puzzle, statements }, 2, null, PROOF_NODES);
   return aborted ? null : solutions.length === 1;
 }
 
 // `diverse = false` drops the clue-kind novelty: weak kinds can fill the Q4 slots (2 per hero) before the
 // solution is unique; the same board is then retried without it instead of being thrown away.
-export function selectStatements(rng, puzzle, cfg, diverse = true) {
-  const candidates = trueStatements(withSafe(puzzle, puzzle.safe), puzzle.solution);
+export function selectStatements(rng, puzzle, diverse = true) {
+  const candidates = trueStatements(puzzle, puzzle.solution);
   let chosen = [];
   let sample = sampleOthers(puzzle, chosen, rng);
   if (!sample) return null;
   while (sample.length > 0) {
     let best = null;
     for (const st of candidates) {
-      if (chosen.includes(st) || !allowed(chosen, st, cfg)) continue;
+      if (chosen.includes(st) || !allowed(chosen, st)) continue;
       const cut = sample.filter(s => !holds(puzzle, s, st)).length;
       if (cut === 0) continue;
       const score = (cut / sample.length) * WEIGHT[st.type] * (diverse ? novelty(chosen, st) : 1) * (0.5 + rng.next());
@@ -207,21 +207,20 @@ export function generatePuzzle(seed, difficulty = 'easy') {
   const rng = createRng(`${seed}|${difficulty}`);
   for (;;) {
     const base = generateBoard(rng, cfg);
-    const safe = placeSafe(rng, base);
-    if (safe < 0) continue;
-    const placement = placeHeroes(rng, withSafe(base, safe), cfg.heroes);
+    const placement = placeHeroes(rng, base);
     if (!placement) continue;
+    const safe = safeOf(getBoard(base), placement);
     const heroes = rng.shuffle(HERO_ROSTER).slice(0, cfg.heroes).map(h => ({ ...h }));
     const puzzle = { version: PUZZLE_VERSION, seed: String(seed), difficulty, ...base, heroes, statements: [], safe, solution: placement };
-    if (!isValidPlacement(withSafe(puzzle, safe), placement)) throw new Error('generator produced an invalid placement');
-    const statements = selectStatements(rng, puzzle, cfg) ?? selectStatements(rng, puzzle, cfg, false);
+    if (!isValidPlacement(puzzle, placement)) throw new Error('generator produced an invalid placement');
+    const statements = selectStatements(rng, puzzle) ?? selectStatements(rng, puzzle, false);
     if (!statements) continue;
     puzzle.statements = statements.sort(statementOrder);
     // Q3: the step solver must reach the solution with the techniques allowed for this difficulty.
     const graded = stepSolve(puzzle, { maxLevel: cfg.maxLevel });
     if (!graded.solved) continue;
     if (graded.safe !== safe || graded.placement.join() !== placement.join()) throw new Error('step solver disagrees with the unique solution');
-    puzzle.thief = thiefOf(withSafe(puzzle, safe), placement);
+    puzzle.thief = thiefOf(puzzle, placement);
     puzzle.grade = { level: graded.level, steps: graded.steps.length };
     return puzzle;
   }

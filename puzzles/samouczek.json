@@ -1,32 +1,32 @@
 {
- "version": 2,
+ "version": 3,
  "seed": "samouczek",
  "difficulty": "easy",
  "n": 4,
  "cells": [
   [
-   "ground",
-   "ground",
-   "crate",
-   "ground"
-  ],
-  [
-   "ground",
+   "rock",
    "ground",
    "ground",
    "ground"
   ],
   [
+   "ground",
+   "ground",
+   "ground",
+   "rock"
+  ],
+  [
+   "ground",
    "bush",
    "ground",
-   "rock",
    "ground"
   ],
   [
    "ground",
    "ground",
-   "ground",
-   "bush"
+   "bush",
+   "pad"
   ]
  ],
  "zones": [
@@ -37,7 +37,7 @@
    0
   ],
   [
-   0,
+   1,
    0,
    0,
    0
@@ -56,8 +56,8 @@
   ]
  ],
  "zoneNames": [
-  "Kanion",
-  "Oaza"
+  "Ruiny",
+  "Baza"
  ],
  "heroes": [
   {
@@ -74,54 +74,34 @@
    "name": "Zyg",
    "gen": "Zyga",
    "gender": "m"
-  },
-  {
-   "name": "Kora",
-   "gen": "Kory",
-   "gender": "f"
   }
  ],
  "statements": [
   {
    "type": "on",
-   "cellType": "bush",
-   "who": 1
+   "cellType": "pad",
+   "who": 0
   },
   {
-   "type": "nextTo",
-   "cellType": "rock",
-   "who": 2
-  },
-  {
-   "type": "sees",
-   "cellType": "safe",
-   "who": 2
-  },
-  {
-   "type": "westOf",
-   "who": 3,
+   "type": "southOf",
+   "who": 2,
    "hero": 1
   },
   {
    "type": "northOfSafe",
-   "who": 3
-  },
-  {
-   "type": "alarm",
-   "zone": 0
+   "who": 2
   }
  ],
- "safe": 5,
+ "safe": 10,
  "solution": [
-  6,
   15,
-  9,
-  0
+  1,
+  4
  ],
  "thief": 0,
  "grade": {
   "level": 2,
-  "steps": 14
+  "steps": 10
  },
  "id": "samouczek",
  "title": "Samouczek"

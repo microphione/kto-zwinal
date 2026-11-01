@@ -1,5 +1,5 @@
 {
- "version": 2,
+ "version": 3,
  "seed": "misja-1",
  "difficulty": "easy",
  "n": 5,
@@ -8,41 +8,62 @@
    "ground",
    "ground",
    "ground",
-   "rock",
+   "ground",
    "ground"
   ],
   [
    "ground",
    "ground",
    "ground",
-   "bush",
+   "rock",
    "pad"
   ],
   [
-   "bush",
-   "barrel",
+   "rock",
+   "ground",
    "ground",
    "ground",
    "ground"
   ],
   [
    "ground",
+   "bush",
+   "bush",
    "ground",
-   "ground",
-   "ground",
-   "rock"
+   "bush"
   ],
   [
    "ground",
-   "bush",
-   "barrel",
    "ground",
+   "rock",
+   "barrel",
    "ground"
   ]
  ],
  "zones": [
   [
    0,
+   1,
+   1,
+   1,
+   1
+  ],
+  [
+   0,
+   1,
+   1,
+   1,
+   1
+  ],
+  [
+   0,
+   1,
+   1,
+   2,
+   2
+  ],
+  [
+   0,
    0,
    2,
    2,
@@ -50,68 +71,48 @@
   ],
   [
    0,
-   2,
-   2,
-   2,
+   0,
+   0,
+   0,
    2
-  ],
-  [
-   0,
-   0,
-   1,
-   2,
-   1
-  ],
-  [
-   0,
-   0,
-   1,
-   1,
-   1
-  ],
-  [
-   1,
-   1,
-   1,
-   1,
-   1
   ]
  ],
  "zoneNames": [
-  "Plaża",
+  "Oaza",
   "Wulkan",
-  "Oaza"
+  "Las"
  ],
  "heroes": [
-  {
-   "name": "Mira",
-   "gen": "Miry",
-   "gender": "f"
-  },
   {
    "name": "Zyg",
    "gen": "Zyga",
    "gender": "m"
   },
   {
-   "name": "Lumi",
-   "gen": "Lumi",
+   "name": "Tesa",
+   "gen": "Tesy",
    "gender": "f"
   },
   {
-   "name": "Grot",
-   "gen": "Grota",
-   "gender": "m"
+   "name": "Mira",
+   "gen": "Miry",
+   "gender": "f"
+  },
+  {
+   "name": "Lumi",
+   "gen": "Lumi",
+   "gender": "f"
   }
  ],
  "statements": [
   {
-   "type": "on",
-   "cellType": "bush",
-   "who": 0
+   "type": "westOf",
+   "who": 0,
+   "hero": 2
   },
   {
-   "type": "eastOfSafe",
+   "type": "nextTo",
+   "cellType": "rock",
    "who": 0
   },
   {
@@ -121,7 +122,7 @@
   },
   {
    "type": "nextTo",
-   "cellType": "barrel",
+   "cellType": "rock",
    "who": 2
   },
   {
@@ -130,26 +131,22 @@
    "who": 2
   },
   {
-   "type": "southOf",
-   "who": 3,
-   "hero": 1
-  },
-  {
-   "type": "alarm",
-   "zone": 2
+   "type": "sees",
+   "cellType": "rock",
+   "who": 3
   }
  ],
- "safe": 7,
+ "safe": 13,
  "solution": [
-  8,
-  10,
-  16,
-  24
+  5,
+  19,
+  21,
+  2
  ],
- "thief": 0,
+ "thief": 1,
  "grade": {
   "level": 2,
-  "steps": 12
+  "steps": 16
  },
  "id": "misja-1",
  "title": "Pierwszy skok"

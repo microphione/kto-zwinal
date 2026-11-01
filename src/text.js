@@ -14,16 +14,10 @@ export const ZONE_NAMES = ['Kanion', 'Oaza', 'Las', 'Ruiny', 'Plaża', 'Kopalnia
 
 const ON = { ground: 'na gołej ziemi', bush: 'w krzakach', pad: 'na wyrzutni' };
 const GENITIVE = { crate: 'skrzyni', barrel: 'beczki', rock: 'skały' };
-const ACCUSATIVE = { crate: 'skrzynię', barrel: 'beczkę', rock: 'skałę', safe: 'sejf' };
+const ACCUSATIVE = { crate: 'skrzynię', barrel: 'beczkę', rock: 'skałę' };
 const DIRECTION = { northOf: 'na północ', southOf: 'na południe', westOf: 'na zachód', eastOf: 'na wschód' };
 
-// D1, D2, … in statement order (RULES.md §5.2), as on the board.
-const droneLabel = (puzzle, st) => `D${puzzle.statements.filter(s => s.type === 'drone').indexOf(st) + 1}`;
-
 export function statementText(puzzle, st) {
-  if (st.type === 'drone') {
-    return st.n === 0 ? `Dron ${droneLabel(puzzle, st)} nikogo nie nagrał.` : `Dron ${droneLabel(puzzle, st)} nagrał jednego bohatera.`;
-  }
   if (st.type === 'alarm') return `Alarm: sejf stał w strefie ${puzzle.zoneNames[st.zone]}.`;
   const f = puzzle.heroes[st.who].gender === 'f';
   const g = (m, fem) => (f ? fem : m);
@@ -55,6 +49,14 @@ export function statementText(puzzle, st) {
   throw new Error(`unknown statement: ${st.type}`);
 }
 
+// Drone hint report (RULES.md §7, src/steps.js `nextDrone`).
+export function droneText(puzzle, report) {
+  const line = `${report.index + 1}. ${report.axis === 'row' ? 'rzędem' : 'kolumną'}`;
+  return report.hero < 0
+    ? `Dron nad ${line} nikogo nie nagrał — tam stał sejf.`
+    : `Dron nad ${line} nagrał: ${puzzle.heroes[report.hero].name}.`;
+}
+
 // ---------- step and hint wording (src/steps.js) ----------
 export const cellName = (puzzle, cell) => `${Math.floor(cell / puzzle.n) + 1},${(cell % puzzle.n) + 1}`;
 
@@ -67,12 +69,18 @@ function cellList(puzzle, cells) {
   return names.length === 1 ? names[0] : `${names.slice(0, -1).join('; ')} i ${names[names.length - 1]}`;
 }
 
-// Variable index k (after the heroes) is the hidden safe (src/steps.js).
+const nameList = names => (names.length === 1 ? names[0] : `${names.slice(0, -1).join(', ')} i ${names[names.length - 1]}`);
+
+// Variable index k (after the heroes) is the safe (src/steps.js).
 const isSafe = (puzzle, h) => h === puzzle.heroes.length;
+const pieceName = (puzzle, h) => (isSafe(puzzle, h) ? 'sejf' : puzzle.heroes[h].name);
+const pieceGen = (puzzle, h) => (isSafe(puzzle, h) ? 'sejfu' : puzzle.heroes[h].gen);
+const isFemale = (puzzle, h) => !isSafe(puzzle, h) && puzzle.heroes[h].gender === 'f';
+const lineName = (axis, i) => `${i + 1}. ${axis === 'row' ? 'rzędzie' : 'kolumnie'}`;
 
 function effectText(puzzle, e) {
   const safe = isSafe(puzzle, e.hero);
-  const name = safe ? 'sejf' : puzzle.heroes[e.hero].name;
+  const name = pieceName(puzzle, e.hero);
   const where = e.removed.length === 1 ? 'polu' : 'polach';
   if (e.left.length === 1) return safe ? `sejf mógł stać tylko na polu ${cellName(puzzle, e.left[0])}` : `${name} może stać tylko na polu ${cellName(puzzle, e.left[0])}`;
   if (e.removed.length <= 4) return safe ? `sejf nie stał na ${where} ${cellList(puzzle, e.removed)}` : `${name} nie stoi na ${where} ${cellList(puzzle, e.removed)}`;
@@ -82,23 +90,21 @@ function effectText(puzzle, e) {
 const capital = s => s[0].toUpperCase() + s.slice(1);
 
 function contradictionText(puzzle, reason, assumed) {
-  const hero = h => puzzle.heroes[h];
-  const g = (h, m, f) => (hero(h).gender === 'f' ? f : m);
   switch (reason.type) {
     case 'empty':
       // The assumption knocked out its own cell: phrase it as a clash instead of "X would have nowhere to stand".
       if (reason.hero === assumed) return 'zasady i zeznania by się wykluczały';
       if (isSafe(puzzle, reason.hero)) return 'sejf nie miałby gdzie stać';
-      return `${hero(reason.hero).name} nie ${g(reason.hero, 'miałby', 'miałaby')} gdzie stanąć`;
-    case 'noThief': return 'nikt nie mógłby stać przy sejfie';
-    case 'twoThieves': return 'przy sejfie stałyby dwie osoby';
-    case 'drone': return `nagranie drona ${reason.drone} by się nie zgadzało`;
-    case 'rules': return 'ktoś kogoś by widział';
+      return `${pieceName(puzzle, reason.hero)} nie ${isFemale(puzzle, reason.hero) ? 'miałaby' : 'miałby'} gdzie stanąć`;
+    case 'noThief': return 'nikt nie stałby po skosie przy sejfie';
+    case 'twoThieves': return 'po skosie przy sejfie stałyby dwie osoby';
+    case 'line': return `w ${lineName(reason.axis, reason.index)} nie stałby nikt ani sejf`;
+    case 'subset': return `zabrakłoby ${reason.axis === 'row' ? 'rzędów' : 'kolumn'} dla: ${nameList(reason.heroes.map(h => pieceName(puzzle, h)))}`;
+    case 'rules': return 'ktoś stałby w jednej linii z kimś';
     case 'statement': {
       const st = puzzle.statements[reason.statement];
-      if (st.type === 'drone') return 'nagranie drona by się nie zgadzało';
       if (st.type === 'alarm') return 'alarm by się nie zgadzał';
-      return `zeznanie ${hero(st.who).gen} byłoby fałszywe`;
+      return `zeznanie ${puzzle.heroes[st.who].gen} byłoby fałszywe`;
     }
   }
   throw new Error(`unknown contradiction: ${reason.type}`);
@@ -107,7 +113,6 @@ function contradictionText(puzzle, reason, assumed) {
 // One logged step of the step solver as a Polish sentence „reason → conclusion” (used by hints).
 export function stepText(puzzle, step) {
   const hero = h => puzzle.heroes[h];
-  const f = h => hero(h).gender === 'f';
   const quote = i => {
     const st = puzzle.statements[i];
     const text = `„${statementText(puzzle, st)}”`;
@@ -125,37 +130,23 @@ export function stepText(puzzle, step) {
     }
     case 'fixed': {
       if (isSafe(puzzle, h)) {
-        why = `Sejf stał na polu ${cellName(puzzle, step.cell)}, więc nikt tam nie stał`;
+        why = `Sejf stał na polu ${cellName(puzzle, step.cell)}, więc w jego rzędzie i kolumnie nikt nie stał`;
         break;
       }
-      // Only the safe lost a cell: the hero's own cell.
-      if (step.effects.every(e => isSafe(puzzle, e.hero))) {
-        why = `${hero(h).name} stoi na polu ${cellName(puzzle, step.cell)}`;
-        break;
-      }
-      const his = f(h) ? 'jej' : 'jego';
-      why = `${hero(h).name} stoi na polu ${cellName(puzzle, step.cell)}, więc nikt inny nie stoi w ${his} linii wzroku`;
-      if (step.safe) why += ' ani przy sejfie';
-      if (step.alone) why += `${step.safe ? ',' : ''} ani w ${his} strefie`;
+      const his = isFemale(puzzle, h) ? 'jej' : 'jego';
+      why = `${hero(h).name} stoi na polu ${cellName(puzzle, step.cell)}, więc w ${his} rzędzie i kolumnie nie stoi nikt inny ani sejf`;
+      if (step.alone) why += `, a w ${his} strefie nikt inny`;
       if (step.aloneOthers.length) why += ` (a kto był sam w swojej strefie, nie stoi w ${his} strefie)`;
       break;
     }
+    case 'line':
+      why = `W każdym rzędzie i każdej kolumnie stoi ktoś albo sejf, a w ${lineName(step.axis, step.index)} może już ${isSafe(puzzle, h) ? 'stać tylko sejf' : `stanąć tylko ${hero(h).name}`}`;
+      break;
     case 'thief':
       why = step.kind === 'only'
-        ? `Tylko ${hero(h).name} może stać przy sejfie, więc to ${f(h) ? 'ona' : 'on'} jest złodziejem`
-        : step.kind === 'sure' ? `${hero(h).name} na pewno stoi przy sejfie, więc nikt inny tam nie stoi`
-          : 'Przy sejfie stała dokładnie jedna osoba (złodziej), a tam nie mógłby stać nikt albo musiałyby stać dwie osoby';
-      break;
-    case 'drone':
-      why = step.kind === 'empty' ? `Dron ${step.drone} nikogo nie nagrał, więc w jego linii nikt nie stoi`
-        : step.kind === 'only' ? `Dron ${step.drone} nagrał jedną osobę, a może to być tylko ${hero(h).name}`
-          : step.kind === 'sure' ? `${hero(h).name} na pewno jest w linii drona ${step.drone}, a dron nagrał tylko jedną osobę`
-            : `Sejf przerywa linię drona ${step.drone}, a tam nagranie by się nie zgadzało`;
-      break;
-    case 'hiding':
-      why = step.between
-        ? `${hero(h).name} i ${hero(step.other).name} stoją w jednej linii, więc sejf musiał ich zasłaniać`
-        : `${hero(h).name} i ${hero(step.other).name} nie mogli się widzieć ani oboje stać przy sejfie`;
+        ? `Tylko ${hero(h).name} może stać po skosie przy sejfie, więc to ${isFemale(puzzle, h) ? 'ona' : 'on'} jest złodziejem`
+        : step.kind === 'sure' ? `${hero(h).name} na pewno stoi po skosie przy sejfie, więc nikt inny tam nie stoi`
+          : 'Po skosie przy sejfie, w jego strefie, stała dokładnie jedna osoba (złodziej); gdyby sejf stał na tych polach, nie byłoby tam nikogo albo byłyby dwie osoby, albo ktoś nie miałby gdzie stanąć';
       break;
     case 'pair':
       why = quote(step.statement);
@@ -163,11 +154,16 @@ export function stepText(puzzle, step) {
     case 'zone':
       why = quote(step.statement) + (step.kind === 'subject' ? '' : ` (strefa ${puzzle.zoneNames[step.zone]})`);
       break;
-    case 'sight':
-      why = `Z tych pól ${hero(h).name} ${f(h) ? 'widziałaby' : 'widziałby'} każde możliwe miejsce ${hero(step.other).gen}`;
+    case 'block':
+      why = `Z tych pól ${pieceName(puzzle, h)} ${isFemale(puzzle, h) ? 'zajęłaby' : 'zająłby'} rząd albo kolumnę każdego możliwego miejsca ${pieceGen(puzzle, step.other)}`;
       break;
+    case 'subset': {
+      const lines = step.lines.map(i => i + 1).join(step.lines.length === 2 ? ' i ' : ', ');
+      why = `${capital(nameList(step.heroes.map(g => pieceName(puzzle, g))))} mogą stać tylko w ${step.axis === 'row' ? 'rzędach' : 'kolumnach'} ${lines}, więc nikt inny tam nie stoi`;
+      break;
+    }
     case 'trial':
-      why = `Gdyby ${isSafe(puzzle, h) ? 'sejf' : hero(h).name} ${!isSafe(puzzle, h) && f(h) ? 'stała' : 'stał'} na polu ${cellName(puzzle, step.cell)}, ${contradictionText(puzzle, step.reason, h)}`;
+      why = `Gdyby ${pieceName(puzzle, h)} ${isFemale(puzzle, h) ? 'stała' : 'stał'} na polu ${cellName(puzzle, step.cell)}, ${contradictionText(puzzle, step.reason, h)}`;
       break;
     default:
       throw new Error(`unknown step: ${step.tech}`);

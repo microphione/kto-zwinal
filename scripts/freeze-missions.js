@@ -1,7 +1,8 @@
 // Writes the fixed missions to puzzles/*.json so later generator changes cannot alter them.
 // The JSON is the source of truth (a later generator may no longer reproduce it from the seeds) and saved
-// progress is keyed by mission id, so existing files are never overwritten. Rules v2 (hidden safe) replaced
-// the v1 files on purpose: they were deleted and frozen again from the same seeds (PLAN.md stage 8).
+// progress is keyed by mission id, so existing files are never overwritten. Each rules version (v2 hidden safe,
+// v3 rows and columns) replaced the older files on purpose: they were deleted and frozen again from the same
+// seeds (PLAN.md stages 8 and 9).
 import { writeFileSync, existsSync } from 'node:fs';
 import { generatePuzzle } from '../src/generator.js';
 

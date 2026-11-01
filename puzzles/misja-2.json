@@ -1,56 +1,56 @@
 {
- "version": 2,
+ "version": 3,
  "seed": "misja-2",
  "difficulty": "medium",
  "n": 6,
  "cells": [
   [
    "ground",
-   "crate",
+   "bush",
    "ground",
-   "ground",
+   "barrel",
    "ground",
    "ground"
   ],
   [
-   "crate",
    "rock",
    "ground",
    "ground",
-   "bush",
-   "ground"
+   "ground",
+   "ground",
+   "barrel"
   ],
   [
    "ground",
    "ground",
    "ground",
+   "ground",
+   "ground",
+   "ground"
+  ],
+  [
+   "ground",
+   "ground",
+   "rock",
    "ground",
    "pad",
    "ground"
   ],
   [
-   "bush",
-   "ground",
-   "crate",
    "ground",
    "ground",
-   "ground"
-  ],
-  [
    "ground",
-   "ground",
-   "bush",
    "ground",
    "ground",
    "ground"
   ],
   [
    "bush",
-   "rock",
+   "bush",
+   "bush",
+   "ground",
    "barrel",
-   "ground",
-   "ground",
-   "ground"
+   "barrel"
   ]
  ],
  "zones": [
@@ -59,55 +59,55 @@
    2,
    2,
    2,
-   2,
-   3
+   1,
+   1
   ],
   [
-   1,
    2,
    2,
-   2,
-   2,
-   3
-  ],
-  [
-   1,
-   1,
-   1,
-   1,
-   3,
-   3
-  ],
-  [
-   1,
-   1,
-   1,
    3,
    3,
-   3
-  ],
-  [
    1,
-   0,
-   0,
-   0,
-   0,
-   3
+   1
   ],
   [
    0,
    0,
    0,
+   3,
+   1,
+   1
+  ],
+  [
    0,
    0,
+   0,
+   3,
+   1,
+   1
+  ],
+  [
+   0,
+   0,
+   0,
+   3,
+   1,
+   1
+  ],
+  [
+   0,
+   0,
+   0,
+   3,
+   3,
    3
   ]
  ],
  "zoneNames": [
-  "Wulkan",
-  "Baza",
-  "Oaza",
-  "Ruiny"
+  "Kanion",
+  "Plaża",
+  "Ruiny",
+  "Las"
  ],
  "heroes": [
   {
@@ -116,90 +116,74 @@
    "gender": "m"
   },
   {
-   "name": "Lumi",
-   "gen": "Lumi",
-   "gender": "f"
-  },
-  {
-   "name": "Tesa",
-   "gen": "Tesy",
-   "gender": "f"
-  },
-  {
    "name": "Rufi",
    "gen": "Rufiego",
    "gender": "m"
   },
   {
+   "name": "Lumi",
+   "gen": "Lumi",
+   "gender": "f"
+  },
+  {
    "name": "Mira",
    "gen": "Miry",
    "gender": "f"
+  },
+  {
+   "name": "Zyg",
+   "gen": "Zyga",
+   "gender": "m"
   }
  ],
  "statements": [
   {
-   "type": "otherZone",
-   "who": 0,
-   "hero": 4
-  },
-  {
-   "type": "eastOf",
-   "who": 0,
-   "hero": 3
-  },
-  {
-   "type": "inZone",
-   "zone": 0,
-   "who": 1
-  },
-  {
-   "type": "northOfSafe",
-   "who": 1
-  },
-  {
-   "type": "inZone",
-   "zone": 0,
-   "who": 2
-  },
-  {
-   "type": "on",
-   "cellType": "bush",
-   "who": 2
+   "type": "nextTo",
+   "cellType": "barrel",
+   "who": 0
   },
   {
    "type": "nextTo",
+   "cellType": "barrel",
+   "who": 1
+  },
+  {
+   "type": "westOf",
+   "who": 1,
+   "hero": 0
+  },
+  {
+   "type": "inZone",
+   "zone": 2,
+   "who": 3
+  },
+  {
+   "type": "notNextTo",
    "cellType": "rock",
    "who": 3
   },
   {
-   "type": "southOf",
-   "who": 3,
-   "hero": 4
-  },
-  {
-   "type": "inZone",
-   "zone": 3,
+   "type": "on",
+   "cellType": "bush",
    "who": 4
   },
   {
-   "type": "drone",
-   "side": "W",
-   "index": 3,
-   "n": 1
+   "type": "eastOfSafe",
+   "who": 4
   }
  ],
- "safe": 34,
+ "safe": 24,
  "solution": [
-  15,
-  28,
-  30,
-  8,
-  5
+  17,
+  10,
+  21,
+  2,
+  31
  ],
- "thief": 1,
+ "thief": 4,
  "grade": {
   "level": 2,
-  "steps": 25
+  "steps": 26
  },
  "id": "misja-2",
  "title": "Akcja w bazie"

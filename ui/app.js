@@ -1,8 +1,9 @@
 // Mobile UI: mission list, board (SVG), hero cards, placement and checking. Logic lives in ../src.
-import { getBoard, withSafe, safeCandidates } from '../src/board.js';
+import { getBoard, safeOf } from '../src/board.js';
 import { evaluate, isValidPlacement, thiefOf, UNARY, PAIR, SAFE_PAIR } from '../src/statements.js';
-import { statementText, stepText, cellName } from '../src/text.js';
-import { nextHint } from '../src/steps.js';
+import { statementText, stepText, cellName, droneText } from '../src/text.js';
+import { nextHint, nextDrone } from '../src/steps.js';
+import { DIFFICULTIES } from '../src/generator.js';
 
 // Fixed missions are frozen JSON (scripts/freeze-missions.js), so generator changes never alter them.
 const MISSIONS = [
@@ -15,7 +16,6 @@ const HERO_COLORS = {
   Rufi: '#e63946', Tesa: '#06d6a0', Grot: '#8d6e63', Lumi: '#f4b400',
 };
 const ZONE_TINTS = ['#ffe8a3', '#c9ecff', '#d5f5b8', '#ffd4d4', '#e3d6ff', '#ffdcc2'];
-const SIDE_TEXT = { N: 'od północy', S: 'od południa', W: 'od zachodu', E: 'od wschodu' };
 const INK = '#1b1530';
 const S = 100;
 const M = 44;
@@ -24,9 +24,10 @@ const app = document.getElementById('app');
 let game = null;
 
 // ---------- storage ----------
-// v2 (hidden safe) uses its own namespace: progress and cases saved by v1 no longer fit and are removed.
-const NS = 'ktozwinal2';
-for (const k of Object.keys(localStorage)) if (k.startsWith('ktozwinal:')) localStorage.removeItem(k);
+// v3 (rows and columns, safe on the last free cell) uses its own namespace: progress and cases saved by
+// v1/v2 no longer fit and are removed.
+const NS = 'ktozwinal3';
+for (const k of Object.keys(localStorage)) if (k.startsWith('ktozwinal:') || k.startsWith('ktozwinal2:')) localStorage.removeItem(k);
 const key = (seed, difficulty) => `${NS}:${difficulty}:${seed}`;
 const SOLVED = `${NS}:solved`;
 const SEEN_RULES = `${NS}:seenRules`;
@@ -37,8 +38,8 @@ function markSolved(id) {
   localStorage.setItem(SOLVED, JSON.stringify([...s]));
 }
 function save() {
-  const history = game.history.map(h => ({ placement: h.placement, safe: h.safe, marks: [...h.marks] }));
-  localStorage.setItem(key(game.seed, game.difficulty), JSON.stringify({ placement: game.placement, safe: game.safe, marks: [...game.marks], history, hints: game.hints }));
+  const history = game.history.map(h => ({ placement: h.placement, marks: [...h.marks] }));
+  localStorage.setItem(key(game.seed, game.difficulty), JSON.stringify({ placement: game.placement, marks: [...game.marks], history, hints: game.hints, flown: game.flown }));
 }
 // The last random case is kept whole (puzzle included), so it can be resumed after leaving or a reload.
 const CURRENT = `${NS}:current`;
@@ -85,12 +86,12 @@ async function dailyCase() {
   return daily;
 }
 
-// Unfinished = not solved and at least one hero, the safe or a cross on the board.
+// Unfinished = not solved and at least one hero or a cross on the board.
 function unfinished(current) {
   const id = key(current.seed, current.puzzle.difficulty);
   if (solvedSet().has(id)) return false;
   const stored = JSON.parse(localStorage.getItem(id) || 'null');
-  return Boolean(stored && (stored.placement.some(c => c >= 0) || stored.safe >= 0 || stored.marks.length));
+  return Boolean(stored && (stored.placement.some(c => c >= 0) || stored.marks.length));
 }
 
 // ---------- helpers ----------
@@ -135,7 +136,7 @@ function renderHome() {
   const solved = solvedSet();
   app.innerHTML = '';
   app.appendChild(el(`<h1 class="title">Kto zwinął?</h1>`));
-  app.appendChild(el(`<p class="subtitle">Ktoś obrobił ukryty sejf. Ustal, kto gdzie stał i gdzie był sejf.</p>`));
+  app.appendChild(el(`<p class="subtitle">Ktoś obrobił ukryty sejf. Ustal, kto gdzie stał, a sejf sam się znajdzie.</p>`));
   const tutorial = el(`<button class="btn mission"><span class="num">?</span><span class="meta">Samouczek<small>Pierwsza sprawa krok po kroku</small></span>${solved.has(key('samouczek', 'easy')) ? '<span class="done">✔</span>' : ''}</button>`);
   tutorial.onclick = () => openFixed(tutorial, 'samouczek', 'Samouczek', showTutorial);
   app.appendChild(tutorial);
@@ -221,18 +222,17 @@ function startGame(puzzle, seed, title, intro = null) {
   game = {
     seed, difficulty, title, puzzle,
     placement: stored?.placement ?? new Array(puzzle.heroes.length).fill(-1),
-    safe: stored?.safe ?? -1,
     marks: new Set(stored?.marks ?? []),
-    selected: 0, // a hero index, or SAFE_SEL for the safe
+    selected: 0,
     mode: 'place',
     showSight: true,
     checked: false,
-    history: (stored?.history ?? []).map(h => ({ placement: h.placement, safe: h.safe ?? -1, marks: new Set(h.marks) })),
+    history: (stored?.history ?? []).map(h => ({ placement: h.placement, marks: new Set(h.marks) })),
     hints: stored?.hints ?? 0,
+    flown: stored?.flown ?? [], // drone reports (RULES.md §7)
     won: false,
   };
-  const firstFree = game.placement.indexOf(-1);
-  game.selected = firstFree >= 0 ? firstFree : SAFE_SEL;
+  game.selected = Math.max(0, game.placement.indexOf(-1));
   game.won = complete() && isSolved();
   renderGame();
   if (intro) {
@@ -244,21 +244,28 @@ function startGame(puzzle, seed, title, intro = null) {
   }
 }
 
-const SAFE_SEL = -2;
-const complete = () => game.safe >= 0 && game.placement.every(c => c >= 0);
-// The player's map: with the safe where the player put it (it blocks sight and drones), else without it.
-const playMap = () => (game.safe >= 0 ? withSafe(game.puzzle, game.safe) : game.puzzle);
-const playBoard = () => getBoard(playMap());
-const drones = () => game.puzzle.statements.filter(st => st.type === 'drone').map((st, i) => ({ st, label: `D${i + 1}` }));
-// The next unplaced hero, else the safe if it is not placed.
+const complete = () => game.placement.every(c => c >= 0);
+// Heroes who share a row or a column (R1).
+function conflicts() {
+  const { placement, puzzle } = game;
+  const n = puzzle.n;
+  const bad = new Set();
+  placement.forEach((a, i) => placement.forEach((b, j) => {
+    if (i < j && a >= 0 && b >= 0 && (Math.floor(a / n) === Math.floor(b / n) || a % n === b % n)) { bad.add(i); bad.add(j); }
+  }));
+  return bad;
+}
+// The safe appears by itself once every hero stands in a row and a column of their own: on the last free crossing.
+const shownSafe = () => (complete() && conflicts().size === 0 ? safeOf(getBoard(game.puzzle), game.placement) : -1);
+const droneCount = () => DIFFICULTIES[game.difficulty]?.drones ?? 0;
+// The next unplaced hero.
 function nextSelection(skip) {
   const next = game.placement.findIndex((c, i) => c < 0 && i !== skip);
-  if (next >= 0) return next;
-  return game.safe < 0 && skip !== SAFE_SEL ? SAFE_SEL : skip;
+  return next >= 0 ? next : skip;
 }
 
 function snapshot() {
-  game.history.push({ placement: game.placement.slice(), safe: game.safe, marks: new Set(game.marks) });
+  game.history.push({ placement: game.placement.slice(), marks: new Set(game.marks) });
   if (game.history.length > 200) game.history.shift();
 }
 
@@ -267,22 +274,12 @@ function onCell(cell) {
   const { placement } = game;
   const board = getBoard(game.puzzle);
   const here = placement.indexOf(cell);
-  const onSafe = cell === game.safe;
   if (game.mode === 'mark') {
-    if (here >= 0 || onSafe || !board.walk[cell]) return;
+    if (here >= 0 || !board.walk[cell]) return;
     snapshot();
     if (game.marks.has(cell)) game.marks.delete(cell);
     else game.marks.add(cell);
     return afterChange();
-  }
-  if (onSafe) {
-    if (game.selected === SAFE_SEL) {
-      snapshot();
-      game.safe = -1;
-      return afterChange();
-    }
-    game.selected = SAFE_SEL;
-    return renderGame();
   }
   if (here >= 0) {
     if (here === game.selected) {
@@ -293,11 +290,14 @@ function onCell(cell) {
     game.selected = here;
     return renderGame();
   }
-  if (!board.walk[cell]) return toast(game.selected === SAFE_SEL ? 'Sejf stał na gołej ziemi.' : 'Tu nie da się stanąć.');
-  if (game.selected === SAFE_SEL && board.type[cell] !== 'ground') return toast('Sejf stał na gołej ziemi, nie w krzakach ani na wyrzutni.');
+  if (!board.walk[cell]) return toast('Tu nie da się stanąć.');
+  // R1 like sudoku: a placed hero takes their whole row and column; only the selected hero may move within them.
+  const n = board.n;
+  const blocker = placement.findIndex((c, h) => h !== game.selected && c >= 0 &&
+    (Math.floor(c / n) === Math.floor(cell / n) || c % n === cell % n));
+  if (blocker >= 0) return toast(`W tym rzędzie albo kolumnie stoi już ${game.puzzle.heroes[blocker].name}.`);
   snapshot();
-  if (game.selected === SAFE_SEL) game.safe = cell;
-  else placement[game.selected] = cell;
+  placement[game.selected] = cell;
   game.marks.delete(cell);
   game.selected = nextSelection(game.selected);
   afterChange();
@@ -318,63 +318,37 @@ function afterChange() {
   if (all) toast('Wszystko rozstawione, ale coś się nie zgadza. Stuknij „Sprawdź”.');
 }
 
-// All statements true + R1 + R2 on the map with the safe ⇔ the unique solution (the generator guarantees it).
+// All statements true + R0–R2 ⇔ the unique solution (the generator guarantees it).
 function isSolved() {
-  const map = playMap();
-  return isValidPlacement(map, game.placement) && game.puzzle.statements.every(st => evaluate(map, game.placement, st));
+  return isValidPlacement(game.puzzle, game.placement) && game.puzzle.statements.every(st => evaluate(game.puzzle, game.placement, st));
 }
 
-// Whether a statement can already be judged: its heroes are placed, and the safe too if the truth depends
-// on it (`sees`: the safe may hide or be the object seen).
+// Whether a statement can already be judged: its heroes are placed, and the safe has appeared if the truth
+// depends on it.
 function evaluable(st) {
   const p = game.placement;
-  const safe = game.safe >= 0;
-  if (st.type === 'alarm') return safe;
-  if (st.type === 'sees' || SAFE_PAIR[st.type]) return safe && p[st.who] >= 0;
+  if (st.type === 'alarm') return shownSafe() >= 0;
+  if (SAFE_PAIR[st.type]) return shownSafe() >= 0;
   if (UNARY.has(st.type)) return p[st.who] >= 0;
   if (PAIR.has(st.type)) return p[st.who] >= 0 && p[st.hero] >= 0;
-  if (st.type === 'drone') return safe && p.every(c => c >= 0);
   return p.every(c => c >= 0);
 }
 
 function falseStatements() {
-  const map = playMap();
-  return new Set(game.puzzle.statements.filter(st => evaluable(st) && !evaluate(map, game.placement, st)));
-}
-
-// Heroes who see each other. Before the safe is placed, a pair counts only if no free cell between them could
-// hold the hidden safe (it might be what hid them from each other).
-function conflicts() {
-  const { placement, puzzle } = game;
-  const board = playBoard();
-  const n = puzzle.n;
-  const hideouts = game.safe >= 0 ? new Set() : new Set(safeCandidates(puzzle).filter(c => !placement.includes(c)));
-  const hidden = (a, b) => {
-    const [ra, ca, rb, cb] = [Math.floor(a / n), a % n, Math.floor(b / n), b % n];
-    for (let c = (ra === rb ? Math.min(ca, cb) : Math.min(ra, rb)) + 1; c < (ra === rb ? Math.max(ca, cb) : Math.max(ra, rb)); c++) {
-      if (hideouts.has(ra === rb ? ra * n + c : c * n + ca)) return true;
-    }
-    return false;
-  };
-  const bad = new Set();
-  placement.forEach((a, i) => placement.forEach((b, j) => {
-    if (i < j && a >= 0 && b >= 0 && board.seesSet[a].has(b) && !hidden(a, b)) { bad.add(i); bad.add(j); }
-  }));
-  return bad;
+  return new Set(game.puzzle.statements.filter(st => evaluable(st) && !evaluate(game.puzzle, game.placement, st)));
 }
 
 function check() {
   game.checked = true;
   const problems = [];
-  const bad = conflicts();
-  if (bad.size) problems.push('ktoś kogoś widzi');
-  if (game.safe >= 0) {
-    const board = playBoard();
-    const thieves = game.placement.filter(c => c >= 0 && board.safeSpot[c]).length;
-    if (thieves > 1) problems.push('przy sejfie stoi więcej niż jedna osoba');
-    if (game.placement.every(c => c >= 0) && thieves === 0) problems.push('nikt nie stoi przy sejfie');
-  } else if (game.placement.every(c => c >= 0)) {
-    problems.push('sejf nie jest jeszcze postawiony');
+  if (conflicts().size) problems.push('ktoś stoi w jednym rzędzie albo kolumnie z kimś');
+  const safe = shownSafe();
+  if (safe >= 0) {
+    const board = getBoard(game.puzzle);
+    const thieves = game.placement.filter(c => board.thiefSpots[safe].includes(c)).length;
+    if (board.type[safe] !== 'ground') problems.push('sejf stał na gołej ziemi, a ostatnie wolne pole nie jest gołą ziemią');
+    else if (thieves > 1) problems.push('po skosie przy sejfie, w jego strefie, stoi więcej niż jedna osoba');
+    else if (thieves === 0) problems.push('nikt nie stoi po skosie przy sejfie w jego strefie');
   }
   const wrong = falseStatements().size;
   const few = wrong % 10 >= 2 && wrong % 10 <= 4 && (wrong % 100 < 12 || wrong % 100 > 14);
@@ -387,7 +361,6 @@ function undo() {
   const last = game.history.pop();
   if (!last) return toast('Nie ma czego cofnąć.');
   game.placement = last.placement;
-  game.safe = last.safe;
   game.marks = last.marks;
   game.won = false;
   game.checked = false;
@@ -398,7 +371,6 @@ function undo() {
 function clearAll() {
   snapshot();
   game.placement = game.placement.map(() => -1);
-  game.safe = -1;
   game.marks.clear();
   game.selected = 0;
   game.won = false;
@@ -408,10 +380,8 @@ function clearAll() {
 function hint() {
   if (game.won) return toast('Sprawa jest już rozwiązana.');
   const { puzzle } = game;
-  const h = nextHint(puzzle, game.placement, game.safe);
-  // Hero index k of a hint is the safe (src/steps.js).
-  const isSafe = h.hero === puzzle.heroes.length;
-  const name = isSafe ? 'Sejf' : puzzle.heroes[h.hero]?.name;
+  const h = nextHint(puzzle, game.placement);
+  const name = puzzle.heroes[h.hero]?.name;
   if (h.kind === 'none') return toast('Brak podpowiedzi dla tego ustawienia.');
   game.hints++;
   save();
@@ -422,9 +392,8 @@ function hint() {
     o.querySelector('[data-a="go"]').onclick = () => {
       o.remove();
       snapshot();
-      if (isSafe) game.safe = -1;
-      else game.placement[h.hero] = -1;
-      game.selected = isSafe ? SAFE_SEL : h.hero;
+      game.placement[h.hero] = -1;
+      game.selected = h.hero;
       afterChange();
     };
     return;
@@ -436,7 +405,7 @@ function hint() {
   const o = overlay(`<h2>Podpowiedź</h2>
     ${folded ? `<button class="btn small ghost hint-more" data-a="all">Pokaż wszystkie kroki (${h.chain.length})</button>` : ''}
     <ol class="hint-steps">${items}</ol>
-    <p style="font-size:18px;text-align:center">Więc <b>${esc(isSafe ? 'sejf' : name)}</b> ${isSafe ? 'stał' : 'stoi'} na polu <b>${cellName(puzzle, h.cell)}</b>.</p>
+    <p style="font-size:18px;text-align:center">Więc <b>${esc(name)}</b> stoi na polu <b>${cellName(puzzle, h.cell)}</b>.</p>
     <div class="actions"><button class="btn ghost" data-a="ok">OK</button><button class="btn" data-a="go">Postaw</button></div>`);
   o.querySelector('[data-a="all"]')?.addEventListener('click', e => {
     o.querySelectorAll('.hint-steps li[hidden]').forEach(li => { li.hidden = false; });
@@ -446,12 +415,26 @@ function hint() {
   o.querySelector('[data-a="go"]').onclick = () => {
     o.remove();
     snapshot();
-    if (isSafe) game.safe = h.cell;
-    else game.placement[h.hero] = h.cell;
+    game.placement[h.hero] = h.cell;
     game.marks.delete(h.cell);
-    game.selected = nextSelection(isSafe ? SAFE_SEL : h.hero);
+    game.selected = nextSelection(h.hero);
     afterChange();
   };
+}
+
+// Drone hint (RULES.md §7): a true report about one row or column of the solution; it counts as a hint.
+function sendDrone() {
+  if (game.won) return toast('Sprawa jest już rozwiązana.');
+  if (game.flown.length >= droneCount()) return toast('Nie masz już dronów.');
+  const report = nextDrone(game.puzzle, game.placement, game.flown);
+  if (!report) return toast('Dron nie ma już czego nagrać.');
+  game.flown.push(report);
+  game.hints++;
+  save();
+  renderGame();
+  const o = overlay(`<h2>Dron D${game.flown.length}</h2><p style="font-size:18px;text-align:center">${esc(droneText(game.puzzle, report))}</p>
+    <div class="actions"><button class="btn" data-a="ok">OK</button></div>`);
+  o.querySelector('[data-a="ok"]').onclick = () => o.remove();
 }
 
 // ---------- drawing ----------
@@ -471,14 +454,13 @@ function heroToken(hero, x, y, { selected, conflict }) {
     `<text x="${x}" y="${y + 14}" text-anchor="middle" font-family="Lilita One, Arial Black, sans-serif" font-size="40" fill="#fff" stroke="${INK}" stroke-width="2.5" paint-order="stroke">${esc(hero.name[0])}</text>`;
 }
 
-function safeToken(x, y, selected) {
-  const sel = selected ? `<rect x="${x - 47}" y="${y - 47}" width="94" height="94" rx="16" fill="none" stroke="#ffc531" stroke-width="7"><animate attributeName="stroke-width" values="5;9;5" dur="1.2s" repeatCount="indefinite"/></rect>` : '';
-  return `${sel}<g transform="translate(${x - S / 2} ${y - S / 2})">${ART.safe}</g>`;
+function safeToken(x, y) {
+  return `<g transform="translate(${x - S / 2} ${y - S / 2})">${ART.safe}</g>`;
 }
 
 function boardSvg() {
   const { puzzle, placement } = game;
-  const board = playBoard();
+  const board = getBoard(puzzle);
   const n = puzzle.n;
   const W = n * S + 2 * M;
   const parts = [];
@@ -492,10 +474,14 @@ function boardSvg() {
     parts.push(`<rect x="${x0(c)}" y="${y0(r)}" width="${S}" height="${S}" fill="${tint}"/>`);
     if ((r + c) % 2) parts.push(`<rect x="${x0(c)}" y="${y0(r)}" width="${S}" height="${S}" fill="#fff" opacity="0.22"/>`);
   }
-  // sight shading of placed heroes
+  // sight shading of placed heroes: their whole row and column (nothing blocks sight)
   if (game.showSight) {
     const seen = new Set();
-    placement.forEach(cell => { if (cell >= 0) for (const j of board.sees[cell]) seen.add(j); });
+    placement.forEach(cell => {
+      if (cell < 0) return;
+      for (let x = 0; x < n; x++) seen.add(Math.floor(cell / n) * n + x).add(x * n + (cell % n));
+    });
+    for (const cell of placement) seen.delete(cell);
     for (const j of seen) {
       parts.push(`<rect x="${x0(j % n)}" y="${y0(Math.floor(j / n))}" width="${S}" height="${S}" fill="url(#seen)"/>`);
     }
@@ -513,10 +499,9 @@ function boardSvg() {
   }
   parts.push(`<path d="${segs.join(' ')}" stroke="${INK}" stroke-opacity="0.55" stroke-width="12" stroke-linecap="round"/>`);
   parts.push(`<path d="${segs.join(' ')}" stroke="#fff" stroke-width="6" stroke-dasharray="16 10" stroke-linecap="round"/>`);
-  // objects of the map (the placed safe is drawn as a token below)
-  const map = getBoard(puzzle);
+  // objects of the map
   for (let i = 0; i < n * n; i++) {
-    const art = ART[map.type[i]];
+    const art = ART[board.type[i]];
     if (art) parts.push(`<g transform="translate(${x0(i % n)} ${y0(Math.floor(i / n))})">${art}</g>`);
   }
   // zone names (first cell of each zone)
@@ -526,8 +511,9 @@ function boardSvg() {
     const w = label.length * 11 + 14;
     parts.push(`<g transform="translate(${x0(i % n) + 4} ${y0(Math.floor(i / n)) + 4})"><rect width="${w}" height="24" rx="12" fill="#fff" stroke="${INK}" stroke-width="3"/><text x="${w / 2}" y="17" text-anchor="middle" font-family="Nunito, sans-serif" font-weight="800" font-size="15" fill="${INK}">${esc(label)}</text></g>`);
   });
-  // the safe the player placed
-  if (game.safe >= 0) parts.push(safeToken(x0(game.safe % n) + S / 2, y0(Math.floor(game.safe / n)) + S / 2, game.selected === SAFE_SEL));
+  // the safe, once it has appeared on the last free crossing
+  const safe = shownSafe();
+  if (safe >= 0) parts.push(safeToken(x0(safe % n) + S / 2, y0(Math.floor(safe / n)) + S / 2));
   // marks
   for (const j of game.marks) {
     const x = x0(j % n), y = y0(Math.floor(j / n));
@@ -546,25 +532,17 @@ function boardSvg() {
     parts.push(`<text x="${x0(k) + S / 2}" y="${M - 12}" text-anchor="middle" font-family="Lilita One, sans-serif" font-size="26" fill="${INK}" opacity="0.6">${k + 1}</text>`);
     parts.push(`<text x="${M / 2}" y="${y0(k) + S / 2 + 9}" text-anchor="middle" font-family="Lilita One, sans-serif" font-size="26" fill="${INK}" opacity="0.6">${k + 1}</text>`);
   }
-  for (const d of drones()) {
-    const i = d.st.index - 1;
-    const pos = {
-      N: [x0(i) + S / 2, M / 2], S: [x0(i) + S / 2, M + n * S + M / 2],
-      W: [M / 2, y0(i) + S / 2], E: [M + n * S + M / 2, y0(i) + S / 2],
-    }[d.st.side];
-    parts.push(`<g transform="translate(${pos[0]} ${pos[1]})"><rect x="-22" y="-17" width="44" height="34" rx="10" fill="#59c3c3" stroke="${INK}" stroke-width="4"/><text y="9" text-anchor="middle" font-family="Lilita One, sans-serif" font-size="22" fill="${INK}">${d.label}</text></g>`);
-  }
+  // drones sent: a badge over the row (east side) or column (south side) they recorded
+  game.flown.forEach((d, i) => {
+    const pos = d.axis === 'col' ? [x0(d.index) + S / 2, M + n * S + M / 2] : [M + n * S + M / 2, y0(d.index) + S / 2];
+    parts.push(`<g transform="translate(${pos[0]} ${pos[1]})"><rect x="-22" y="-17" width="44" height="34" rx="10" fill="#59c3c3" stroke="${INK}" stroke-width="4"/><text y="9" text-anchor="middle" font-family="Lilita One, sans-serif" font-size="22" fill="${INK}">D${i + 1}</text></g>`);
+  });
   // tap targets
   for (let i = 0; i < n * n; i++) {
     parts.push(`<rect class="cell" data-cell="${i}" x="${x0(i % n)}" y="${y0(Math.floor(i / n))}" width="${S}" height="${S}" fill="transparent"/>`);
   }
   const defs = `<defs><pattern id="seen" width="22" height="22" patternUnits="userSpaceOnUse" patternTransform="rotate(45)"><rect width="22" height="22" fill="#ff5d73" opacity="0.12"/><rect width="8" height="22" fill="#e63946" opacity="0.45"/></pattern></defs>`;
   return `<svg class="board" viewBox="0 0 ${W} ${W}" xmlns="http://www.w3.org/2000/svg">${defs}${parts.join('')}</svg>`;
-}
-
-function droneText(d) {
-  const line = d.st.side === 'N' || d.st.side === 'S' ? `kolumna ${d.st.index}` : `rząd ${d.st.index}`;
-  return `Dron ${d.label} (${line}, patrzy ${SIDE_TEXT[d.st.side]}) ${d.st.n === 0 ? 'nikogo nie nagrał' : 'nagrał jednego bohatera'}.`;
 }
 
 function renderGame() {
@@ -603,23 +581,23 @@ function renderGame() {
     cards.appendChild(card);
   });
   const alarms = puzzle.statements.filter(st => st.type === 'alarm');
-  const safeLines = alarms.length
-    ? alarms.map(st => `<p class="stmt ${wrong.has(st) ? 'bad' : ''}">${esc(statementText(puzzle, st))}</p>`).join('')
-    : `<p class="stmt silent">Ukryty. Ustal, na którym polu stał.</p>`;
-  const safeWhere = game.safe >= 0 ? `<span class="where">pole ${coord(game.safe, puzzle.n)}</span>` : '';
-  const safeCard = el(`<div class="card safe ${game.selected === SAFE_SEL ? 'selected' : ''} ${game.safe >= 0 ? 'placed' : ''}">
+  const safe = shownSafe();
+  const safeLines = alarms.map(st => `<p class="stmt ${wrong.has(st) ? 'bad' : ''}">${esc(statementText(puzzle, st))}</p>`).join('') +
+    (safe < 0 ? `<p class="stmt silent">Pojawi się sam na jedynym wolnym polu, gdy ustawisz wszystkich.</p>` : '');
+  const safeWhere = safe >= 0 ? `<span class="where">pole ${coord(safe, puzzle.n)}</span>` : '';
+  cards.appendChild(el(`<div class="card safe ${safe >= 0 ? 'placed' : ''}">
     <div class="avatar safe-avatar">${icon('safe')}</div>
-    <div class="body"><div class="hero-name">Sejf${safeWhere}</div>${safeLines}</div></div>`);
-  safeCard.onclick = () => { game.selected = SAFE_SEL; game.mode = 'place'; renderGame(); };
-  cards.appendChild(safeCard);
-  for (const d of drones()) {
-    cards.appendChild(el(`<div class="card drone"><div class="avatar">${d.label}</div><div class="body"><div class="hero-name">Nagranie z drona</div><p class="stmt ${wrong.has(d.st) ? 'bad' : ''}">${esc(droneText(d))}</p></div></div>`));
-  }
+    <div class="body"><div class="hero-name">Sejf${safeWhere}</div>${safeLines}</div></div>`));
+  game.flown.forEach((d, i) => {
+    cards.appendChild(el(`<div class="card drone"><div class="avatar">D${i + 1}</div><div class="body"><div class="hero-name">Nagranie z drona</div><p class="stmt">${esc(droneText(puzzle, d))}</p></div></div>`));
+  });
   app.appendChild(cards);
 
-  const extra = el(`<div class="toolbar" style="grid-template-columns:1.3fr 1fr 1fr">
+  const drones = droneCount();
+  const extra = el(`<div class="toolbar" style="grid-template-columns:${drones ? '1.1fr 1fr 1fr 1fr' : '1.3fr 1fr 1fr'}">
     <button class="btn small ghost" data-act="sight">Wzrok: ${game.showSight ? 'wł.' : 'wył.'}</button>
     <button class="btn small secondary" data-act="hint">Podpowiedź</button>
+    ${drones ? `<button class="btn small secondary" data-act="drone" ${game.flown.length >= drones ? 'disabled' : ''}>Dron (${drones - game.flown.length})</button>` : ''}
     <button class="btn small danger" data-act="clear">Wyczyść</button>
   </div>`);
   app.appendChild(extra);
@@ -633,6 +611,7 @@ function renderGame() {
       undo,
       check,
       hint,
+      drone: sendDrone,
       sight: () => { game.showSight = !game.showSight; renderGame(); },
       clear: async () => { if (await ask('Wyczyścić planszę?', 'Wyczyść', 'Anuluj')) clearAll(); },
     })[b.dataset.act]();
@@ -641,10 +620,10 @@ function renderGame() {
 
 function showWin() {
   const { puzzle, placement } = game;
-  const thief = puzzle.heroes[thiefOf(playMap(), placement)];
+  const thief = puzzle.heroes[thiefOf(puzzle, placement)];
   const o = overlay(`<h2>Sprawa rozwiązana!</h2>
     <div class="avatar win-avatar" style="background:${color(thief)}">${esc(thief.name[0])}</div>
-    <p style="text-align:center;font-size:20px;font-weight:800">Sejf stał na polu ${cellName(puzzle, game.safe)}. ${thief.gender === 'f' ? 'Obrobiła' : 'Obrobił'} go <b>${esc(thief.name)}</b>!</p>
+    <p style="text-align:center;font-size:20px;font-weight:800">Sejf stał na polu ${cellName(puzzle, safeOf(getBoard(puzzle), placement))}. ${thief.gender === 'f' ? 'Obrobiła' : 'Obrobił'} go <b>${esc(thief.name)}</b>!</p>
     <p style="text-align:center;font-weight:800">${game.hints ? `Podpowiedzi: ${game.hints}` : 'Bez żadnej podpowiedzi!'}</p>
     <div class="actions"><button class="btn ghost" data-a="stay">Zobacz planszę</button><button class="btn" data-a="home">Menu</button></div>`);
   o.querySelector('[data-a="stay"]').onclick = () => o.remove();
@@ -657,19 +636,19 @@ function icon(type) {
 
 function showRules() {
   const o = overlay(`<h2>Zasady</h2>
-    <p><b>Cel:</b> ustal, gdzie stał każdy bohater i gdzie stał sejf. Złodziejem jest ten, kto stał przy sejfie.</p>
+    <p><b>Cel:</b> ustal, gdzie stał każdy bohater. Sejf sam się wtedy znajdzie, a z nim złodziej.</p>
     <ul>
-      <li><b>Sejf jest ukryty:</b> nie ma go na mapie. Stał na jednym polu gołej ziemi, nikt na nim nie stał i zasłaniał widok jak przeszkoda. Postaw go sam, tak jak bohaterów.</li>
       <li>Każdy stał na innym wolnym polu: na ziemi, w krzakach albo na wyrzutni.</li>
-      <li><b>Nikt nikogo nie widział:</b> dwie osoby nie mogą stać w tym samym rzędzie ani kolumnie, chyba że między nimi jest przeszkoda (skrzynia, beczka, skała albo sejf). Granice stref nie zasłaniają widoku.</li>
-      <li><b>Przy sejfie</b> (pole tuż obok, w tej samej strefie) stała dokładnie jedna osoba: złodziej.</li>
+      <li><b>Nikt nikogo nie widział:</b> w każdym rzędzie i każdej kolumnie stoi najwyżej jedna osoba. Nic nie zasłania widoku: ani przeszkody, ani granice stref.</li>
+      <li><b>Sejf</b> stał na jedynym polu, którego rząd i kolumna są wolne od ludzi. To pole musi być gołą ziemią.</li>
+      <li><b>Złodziej</b> to jedyna osoba stojąca po skosie przy sejfie, w tej samej strefie co sejf.</li>
       <li>„Obok” = tuż nad, pod, z lewej lub z prawej, w tej samej strefie.</li>
-      <li>„Widziałem X” = patrząc w którąś z 4 stron, pierwszą przeszkodą był X.</li>
+      <li>„Widziałem X” = w moim rzędzie albo kolumnie był X.</li>
       <li>„Gdzieś na północ od” = w dowolnym rzędzie wyżej (kolumna bez znaczenia).</li>
       <li>„Gdzieś na północ od sejfu” = w dowolnym rzędzie wyżej niż sejf.</li>
-      <li>Dron patrzy wzdłuż rzędu lub kolumny od krawędzi aż do pierwszej przeszkody (także sejfu).</li>
       <li>Alarm podaje strefę, w której stał sejf.</li>
-      <li>Wszystkie zeznania są prawdziwe. Rozwiązanie jest dokładnie jedno.</li>
+      <li>Dron (od poziomu średniego) to dodatkowa podpowiedź: mówi, kto stał w jednym rzędzie albo kolumnie.</li>
+      <li>Wszystkie zeznania są prawdziwe. Rozwiązanie jest dokładnie jedno i da się do niego dojść bez dronów.</li>
     </ul>
     <div class="legend">
       ${icon('bush')}<span>Krzaki: można stanąć</span>
@@ -677,21 +656,21 @@ function showRules() {
       ${icon('crate')}<span>Skrzynia: przeszkoda</span>
       ${icon('barrel')}<span>Beczka: przeszkoda</span>
       ${icon('rock')}<span>Skała: przeszkoda</span>
-      ${icon('safe')}<span>Sejf: ustawiasz go sam; zasłania widok, przy nim stał złodziej</span>
+      ${icon('safe')}<span>Sejf: pojawia się sam, gdy ustawisz wszystkich</span>
     </div>
-    <p><b>Sterowanie:</b> wybierz bohatera albo sejf z listy i stuknij pole. Stuknij jeszcze raz, żeby zdjąć. Tryb „Krzyżyk” zaznacza pola wykluczone. Czerwone pola to miejsca widziane przez postawionych bohaterów (sejf, jeśli go postawisz, zasłania widok).</p>
+    <p><b>Sterowanie:</b> wybierz bohatera z listy i stuknij pole. Stuknij jeszcze raz, żeby zdjąć. Tryb „Krzyżyk” zaznacza pola wykluczone. Czerwone pola to rzędy i kolumny zajęte przez postawionych bohaterów: nie da się tam postawić nikogo innego.</p>
     <div class="actions"><button class="btn" data-a="ok">Gramy!</button></div>`);
   o.querySelector('[data-a="ok"]').onclick = () => o.remove();
 }
 
 function showTutorial() {
   const o = overlay(`<h2>Samouczek</h2>
-    <p>Ktoś obrobił sejf. Na mapie stały 4 osoby, a Twoim zadaniem jest ustalić, kto gdzie stał i gdzie stał sejf.</p>
+    <p>Ktoś obrobił sejf. Na mapie stały 3 osoby, a Twoim zadaniem jest ustalić, kto gdzie stał.</p>
     <ul>
-      <li><b>Sejf jest ukryty:</b> stał na jednym polu gołej ziemi i zasłaniał widok jak przeszkoda. Alarm mówi, w której strefie. Gdy go znajdziesz, wybierz „Sejf” z listy i postaw go.</li>
-      <li><b>Nikt nikogo nie widział:</b> dwie osoby nie stoją w jednym rzędzie ani kolumnie, chyba że dzieli je przeszkoda (także sejf).</li>
-      <li>Przy sejfie (tuż obok, w tej samej strefie) stała dokładnie jedna osoba: złodziej.</li>
-      <li>Każde zeznanie jest prawdziwe. Zacznij od Miry: stała w krzakach, a krzaki są tylko dwa.</li>
+      <li><b>Nikt nikogo nie widział:</b> w każdym rzędzie i każdej kolumnie stoi najwyżej jedna osoba. Nic nie zasłania widoku.</li>
+      <li><b>Sejf jest ukryty:</b> stał na jedynym polu, którego rząd i kolumna zostały wolne. Zawsze na gołej ziemi. Pojawi się sam, gdy ustawisz wszystkich.</li>
+      <li>Złodziej to jedyna osoba stojąca po skosie przy sejfie, w tej samej strefie.</li>
+      <li>Każde zeznanie jest prawdziwe. Zacznij od Bobo: stał na wyrzutni, a wyrzutnia jest tylko jedna.</li>
       <li>Nie wiesz, co dalej? Stuknij „Podpowiedź”: zobaczysz tok rozumowania krok po kroku.</li>
     </ul>
     <div class="actions"><button class="btn ghost" data-a="rules">Pełne zasady</button><button class="btn" data-a="ok">Zaczynam!</button></div>`);

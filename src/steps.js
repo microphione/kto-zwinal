@@ -1,12 +1,13 @@
-// Human-style step solver (PLAN.md stages 3 and 8, RULES.md Q3): candidate cells per hero and for the hidden
-// safe, sound techniques applied cheapest first, every step logged so it can be explained as a hint. Level 3
+// Human-style step solver (PLAN.md stages 3 and 9, RULES.md Q3): candidate cells per hero and for the safe,
+// sound techniques applied cheapest first, every step logged so it can be explained as a hint. Level 3
 // ("trial") is a single assumption refuted by levels 1–2; it is never nested.
-// Variables 0..k−1 are the heroes, variable k is the safe. Whatever depends on the safe is quantified over its
-// remaining cells: a cell is removed only when no remaining safe cell allows it.
-import { getBoard, droneScan, withSafe, safeCandidates } from './board.js';
+// Variables 0..k−1 are the heroes, variable k is the safe: N pieces, one in every row and every column
+// (R1 with k = N − 1 heroes, RULES.md §2).
+import { getBoard, safeOf } from './board.js';
 import { UNARY, PAIR, SAFE_PAIR, unaryHolds, pairHolds, evaluate, isValidPlacement } from './statements.js';
+import { createRng } from './rng.js';
 
-export const LEVEL = { statements: 1, fixed: 1, thief: 1, drone: 1, pair: 2, sight: 2, hiding: 2, zone: 2, trial: 3 };
+export const LEVEL = { statements: 1, fixed: 1, line: 1, thief: 1, pair: 2, block: 2, subset: 2, zone: 2, trial: 3 };
 
 class Contradiction extends Error {
   constructor(reason) {
@@ -19,61 +20,26 @@ function setup(puzzle) {
   const board = getBoard(puzzle);
   const k = puzzle.heroes.length;
   const st = puzzle.statements.map((s, sid) => ({ ...s, sid })); // sid: position in puzzle.statements
-  const safes = safeCandidates(puzzle);
-  const maps = new Map(safes.map(s => [s, getBoard(withSafe(puzzle, s))]));
-  const safeDependent = s => s.type === 'sees' || SAFE_PAIR[s.type];
-  const betweenCache = new Map();
   return {
     puzzle,
     board,
     k,
     S: k,
-    safes,
-    maps,
-    nb: board.neighbours.map(list => new Set(list)),
-    // Cells strictly between two cells of one row or column.
-    between(x, y) {
-      let b = betweenCache.get(x * 64 + y);
-      if (!b) {
-        const n = board.n;
-        const [rx, cx, ry, cy] = [Math.floor(x / n), x % n, Math.floor(y / n), y % n];
-        b = [];
-        if (rx === ry) for (let c = Math.min(cx, cy) + 1; c < Math.max(cx, cy); c++) b.push(rx * n + c);
-        else if (cx === cy) for (let r = Math.min(rx, ry) + 1; r < Math.max(rx, ry); r++) b.push(r * n + cx);
-        betweenCache.set(x * 64 + y, b);
-      }
-      return b;
-    },
-    unary: st.filter(s => UNARY.has(s.type) && !safeDependent(s)),
-    bySafe: st.filter(safeDependent), // true or false depending on where the safe is
+    n: board.n,
+    spots: board.thiefSpots.map(list => new Set(list)),
+    unary: st.filter(s => UNARY.has(s.type) && !SAFE_PAIR[s.type]),
+    bySafe: st.filter(s => SAFE_PAIR[s.type]), // the speaker's cell against the safe's cell
     alarms: st.filter(s => s.type === 'alarm'),
     pairs: st.filter(s => PAIR.has(s.type)),
     zoneStatements: st.filter(s => s.type === 'alone' || s.type === 'zoneCount'),
-    drones: st.filter(s => s.type === 'drone').map((s, i) => ({
-      ...s,
-      label: `D${i + 1}`,
-      scans: new Map(safes.map(c => [c, new Set(droneScan(maps.get(c), s.side, s.index))])),
-    })),
     alone: new Set(st.filter(s => s.type === 'alone').map(s => s.who)),
   };
 }
 
-const holdsAt = (ctx, st, x, s) => unaryHolds(ctx.maps.get(s), st, x);
-
-// Heroes on x and y with the safe on s break neither R1 nor R2.
-function okAt(ctx, s, x, y) {
-  return x !== y && s !== x && s !== y && !ctx.maps.get(s).seesSet[x].has(y) && !(ctx.nb[x].has(s) && ctx.nb[y].has(s));
-}
-
-// Some remaining safe cell lets heroes stand on x and y together. The safe can only hide a line of sight by
-// standing on it, so for cells in sight only the cells between them are tried.
-function together(ctx, safeDom, x, y) {
-  if (x === y) return false;
-  const free = s => s !== x && s !== y && !(ctx.nb[x].has(s) && ctx.nb[y].has(s));
-  if (ctx.board.seesSet[x].has(y)) return ctx.between(x, y).some(s => safeDom.has(s) && free(s));
-  for (const s of safeDom) if (free(s)) return true;
-  return false;
-}
+const rowOf = (ctx, x) => Math.floor(x / ctx.n);
+const colOf = (ctx, x) => x % ctx.n;
+// Two pieces on x and y break neither R1 nor the one-piece-per-line rule.
+const apart = (ctx, x, y) => rowOf(ctx, x) !== rowOf(ctx, y) && colOf(ctx, x) !== colOf(ctx, y);
 
 // Shared state of one propagation: domains plus (optionally) the step log.
 class State {
@@ -81,15 +47,13 @@ class State {
     this.ctx = ctx;
     this.dom = dom;
     this.log = log;
-    // Fixed variables whose consequences were applied, with the number of safe cells left at that time:
-    // fewer safe cells can make a fixed hero's consequences stronger, so they are applied again.
-    this.done = new Map();
+    this.done = new Set(); // fixed variables whose consequences were applied
     this.lastWrite = Array.from({ length: ctx.k + 1 }, () => []);
   }
 
   clone() {
     const s = new State(this.ctx, this.dom.map(d => new Set(d)), null);
-    s.done = new Map(this.done);
+    s.done = new Set(this.done);
     return s;
   }
 
@@ -117,17 +81,20 @@ class State {
   }
 }
 
-const ALL = ctx => [...Array(ctx.k).keys()];
+const HEROES = ctx => [...Array(ctx.k).keys()];
+const PIECES = ctx => [...Array(ctx.k + 1).keys()];
 
 function initialDomains(ctx, facts) {
-  const dom = ALL(ctx).map(() => new Set(ctx.board.walkCells));
-  dom.push(new Set(ctx.safes));
+  const { board } = ctx;
+  const dom = HEROES(ctx).map(() => new Set(board.walkCells));
+  // R0, and R2 needs at least one thief spot.
+  dom.push(new Set(board.walkCells.filter(s => board.type[s] === 'ground' && ctx.spots[s].size > 0)));
   for (const { hero, cell } of facts) dom[hero] = new Set([cell]);
   return dom;
 }
 
 function applyStatements(state) {
-  const { ctx, dom } = state;
+  const { ctx } = state;
   const { S } = ctx;
   if (ctx.alarms.length) {
     state.apply({ tech: 'statements', hero: S, statements: ctx.alarms.map(s => s.sid) },
@@ -135,180 +102,142 @@ function applyStatements(state) {
   }
   for (let h = 0; h < ctx.k; h++) {
     const own = ctx.unary.filter(s => s.who === h);
-    const bySafe = ctx.bySafe.filter(s => s.who === h);
-    if (!own.length && !bySafe.length) continue;
-    const keep = c => own.every(s => unaryHolds(ctx.board, s, c)) &&
-      (!bySafe.length || [...dom[S]].some(s => s !== c && bySafe.every(st => holdsAt(ctx, st, c, s))));
-    state.apply({ tech: 'statements', hero: h, statements: [...own, ...bySafe].map(s => s.sid) },
-      [{ hero: h, keep }], bySafe.length ? [S] : []);
+    if (!own.length) continue;
+    state.apply({ tech: 'statements', hero: h, statements: own.map(s => s.sid) },
+      [{ hero: h, keep: c => own.every(s => unaryHolds(ctx.board, s, c)) }], []);
   }
 }
 
 // ---------- level 1 ----------
+// A placed piece takes its row and column from everyone else (and its zone, for `alone`).
 function fixed(state) {
   const { ctx, dom } = state;
-  const { board, S, nb } = ctx;
-  for (let h = 0; h <= ctx.k; h++) {
-    if (dom[h].size !== 1 || state.done.get(h) === dom[S].size) continue;
-    state.done.set(h, dom[S].size);
+  const { board, S } = ctx;
+  for (const h of PIECES(ctx)) {
+    if (dom[h].size !== 1 || state.done.has(h)) continue;
+    state.done.add(h);
     const [x] = dom[h];
-    if (h === S) {
-      if (state.apply({ tech: 'fixed', hero: S, cell: x }, ALL(ctx).map(g => ({ hero: g, keep: c => c !== x })), [S])) return true;
-      continue;
-    }
     const z = board.zone[x];
-    const changes = ALL(ctx).filter(g => g !== h).map(g => ({
+    const zoneBound = g => h !== S && g !== S && (ctx.alone.has(h) || ctx.alone.has(g));
+    const changes = PIECES(ctx).filter(g => g !== h).map(g => ({
       hero: g,
-      keep: c => together(ctx, dom[S], x, c) && !((ctx.alone.has(h) || ctx.alone.has(g)) && board.zone[c] === z),
+      keep: c => apart(ctx, x, c) && !(zoneBound(g) && board.zone[c] === z),
     }));
-    changes.push({ hero: S, keep: s => s !== x });
-    const safe = [...dom[S]].every(s => nb[x].has(s)); // surely next to the safe: nobody else is
-    const aloneOthers = ALL(ctx).filter(g => g !== h && ctx.alone.has(g));
-    if (state.apply({ tech: 'fixed', hero: h, cell: x, safe, alone: ctx.alone.has(h), aloneOthers }, changes, [h, S])) return true;
+    const aloneOthers = h === S ? [] : HEROES(ctx).filter(g => g !== h && ctx.alone.has(g));
+    if (state.apply({ tech: 'fixed', hero: h, cell: x, alone: h !== S && ctx.alone.has(h), aloneOthers }, changes, [h])) return true;
   }
   return false;
 }
 
-// R2: exactly one hero stands next to the safe.
+// Every row and every column holds exactly one piece: a line that only one piece can still reach is its.
+function line(state) {
+  const { ctx, dom } = state;
+  for (const axis of ['row', 'col']) {
+    const of = axis === 'row' ? rowOf : colOf;
+    for (let i = 0; i < ctx.n; i++) {
+      const can = PIECES(ctx).filter(h => [...dom[h]].some(c => of(ctx, c) === i));
+      if (can.length === 0) throw new Contradiction({ type: 'line', axis, index: i });
+      if (can.length === 1 && state.apply({ tech: 'line', axis, index: i, hero: can[0] },
+        [{ hero: can[0], keep: c => of(ctx, c) === i }], PIECES(ctx))) return true;
+    }
+  }
+  return false;
+}
+
+// R2: exactly one hero stands on a thief spot of the safe (diagonal, same zone).
 function thief(state) {
   const { ctx, dom } = state;
-  const { S, nb } = ctx;
+  const { S, spots } = ctx;
   const safes = [...dom[S]];
-  const nextToSome = c => safes.some(s => nb[c].has(s));
-  const nextToEvery = c => safes.every(s => nb[c].has(s));
-  const can = ALL(ctx).filter(h => [...dom[h]].some(nextToSome));
+  const spotOfSome = c => safes.some(s => spots[s].has(c));
+  const spotOfEvery = c => safes.every(s => spots[s].has(c));
+  const can = HEROES(ctx).filter(h => [...dom[h]].some(spotOfSome));
   if (can.length === 0) throw new Contradiction({ type: 'noThief' });
-  const sure = ALL(ctx).filter(h => [...dom[h]].every(nextToEvery));
+  const sure = HEROES(ctx).filter(h => [...dom[h]].every(spotOfEvery));
   if (sure.length > 1) throw new Contradiction({ type: 'twoThieves', heroes: sure });
-  if (can.length === 1 && state.apply({ tech: 'thief', kind: 'only', hero: can[0] }, [{ hero: can[0], keep: nextToSome }], [...ALL(ctx), S])) return true;
+  if (can.length === 1 && state.apply({ tech: 'thief', kind: 'only', hero: can[0] }, [{ hero: can[0], keep: spotOfSome }], [...HEROES(ctx), S])) return true;
   if (sure.length === 1) {
     const h = sure[0];
-    const changes = ALL(ctx).filter(g => g !== h).map(g => ({ hero: g, keep: c => !nextToEvery(c) }));
+    const changes = HEROES(ctx).filter(g => g !== h).map(g => ({ hero: g, keep: c => !spotOfEvery(c) }));
     if (state.apply({ tech: 'thief', kind: 'sure', hero: h }, changes, [h, S])) return true;
   }
-  // The safe stood where someone can stand next to it, and not where two heroes surely do.
+  // The safe stood where someone can still be its thief, and not where two heroes surely are on its spots.
   const keepSafe = s => {
     let could = 0, must = 0;
-    for (const h of ALL(ctx)) {
-      const cells = [...dom[h]].filter(c => c !== s);
+    for (const h of HEROES(ctx)) {
+      const cells = [...dom[h]].filter(c => apart(ctx, s, c));
       if (!cells.length) return false;
-      const next = cells.filter(c => nb[c].has(s)).length;
+      const next = cells.filter(c => spots[s].has(c)).length;
       if (next) could++;
       if (next === cells.length) must++;
     }
     return could > 0 && must <= 1;
   };
-  return state.apply({ tech: 'thief', kind: 'safe' }, [{ hero: S, keep: keepSafe }], ALL(ctx));
-}
-
-// Every two cells of one scan see each other (the scan is an unbroken line), so it holds at most one hero.
-// The safe ends a scan, so each safe cell has its own scan.
-function drone(state) {
-  const { ctx, dom } = state;
-  const { S } = ctx;
-  for (const d of ctx.drones) {
-    const safes = [...dom[S]];
-    const inSome = c => safes.some(s => d.scans.get(s).has(c));
-    const inEvery = c => safes.every(s => d.scans.get(s).has(c));
-    const info = { tech: 'drone', drone: d.label, statement: d.sid };
-    // Heroes that could / surely would be in the scan with the safe on s.
-    const counts = s => {
-      const scan = d.scans.get(s);
-      let could = 0, must = 0;
-      for (const h of ALL(ctx)) {
-        const cells = [...dom[h]].filter(c => c !== s);
-        if (!cells.length) return null;
-        if (cells.some(c => scan.has(c))) could++;
-        if (cells.every(c => scan.has(c))) must++;
-      }
-      return { could, must };
-    };
-    if (d.n === 0) {
-      const changes = ALL(ctx).map(g => ({ hero: g, keep: c => !inEvery(c) }));
-      if (state.apply({ ...info, kind: 'empty' }, changes, [S])) return true;
-      if (state.apply({ ...info, kind: 'safe' }, [{ hero: S, keep: s => counts(s)?.must === 0 }], ALL(ctx))) return true;
-      continue;
-    }
-    const can = ALL(ctx).filter(h => [...dom[h]].some(inSome));
-    if (can.length === 0) throw new Contradiction({ type: 'drone', drone: d.label });
-    const sure = ALL(ctx).filter(h => [...dom[h]].every(inEvery));
-    if (sure.length > 1) throw new Contradiction({ type: 'drone', drone: d.label });
-    if (can.length === 1 && state.apply({ ...info, kind: 'only', hero: can[0] }, [{ hero: can[0], keep: inSome }], [...ALL(ctx), S])) return true;
-    if (sure.length === 1) {
-      const h = sure[0];
-      const changes = ALL(ctx).filter(g => g !== h).map(g => ({ hero: g, keep: c => !inEvery(c) }));
-      if (state.apply({ ...info, kind: 'sure', hero: h }, changes, [h, S])) return true;
-    }
-    const keepSafe = s => {
-      const c = counts(s);
-      return c !== null && c.could >= 1 && c.must <= 1;
-    };
-    if (state.apply({ ...info, kind: 'safe' }, [{ hero: S, keep: keepSafe }], ALL(ctx))) return true;
-  }
-  return false;
+  return state.apply({ tech: 'thief', kind: 'safe' }, [{ hero: S, keep: keepSafe }], HEROES(ctx));
 }
 
 // ---------- level 2 ----------
-// A partner cell must satisfy the statement and be compatible (R1, R2) for some remaining safe cell.
+// A partner cell must satisfy the statement and lie in another row and column.
 function pair(state) {
   const { ctx, dom } = state;
   const { board, S } = ctx;
-  for (const s of ctx.pairs) {
-    const a = s.who, b = s.hero;
-    const keepA = x => [...dom[b]].some(y => pairHolds(board, s, x, y) && together(ctx, dom[S], x, y));
-    if (state.apply({ tech: 'pair', statement: s.sid, hero: a }, [{ hero: a, keep: keepA }], [b, S])) return true;
-    const keepB = y => [...dom[a]].some(x => pairHolds(board, s, x, y) && together(ctx, dom[S], x, y));
-    if (state.apply({ tech: 'pair', statement: s.sid, hero: b }, [{ hero: b, keep: keepB }], [a, S])) return true;
-  }
-  // Statements about the safe tie the speaker's cell and the safe's cell.
-  for (const s of ctx.bySafe) {
-    const h = s.who;
-    const keepH = x => [...dom[S]].some(c => c !== x && holdsAt(ctx, s, x, c));
-    if (state.apply({ tech: 'pair', statement: s.sid, hero: h }, [{ hero: h, keep: keepH }], [S])) return true;
-    const keepS = c => [...dom[h]].some(x => x !== c && holdsAt(ctx, s, x, c));
-    if (state.apply({ tech: 'pair', statement: s.sid, hero: S }, [{ hero: S, keep: keepS }], [h])) return true;
+  const ties = [
+    ...ctx.pairs.map(s => ({ s, a: s.who, b: s.hero, type: s.type })),
+    ...ctx.bySafe.map(s => ({ s, a: s.who, b: S, type: SAFE_PAIR[s.type] })),
+  ];
+  for (const { s, a, b, type } of ties) {
+    const st = { type };
+    const keepA = x => [...dom[b]].some(y => apart(ctx, x, y) && pairHolds(board, st, x, y));
+    if (state.apply({ tech: 'pair', statement: s.sid, hero: a }, [{ hero: a, keep: keepA }], [b])) return true;
+    const keepB = y => [...dom[a]].some(x => apart(ctx, x, y) && pairHolds(board, st, x, y));
+    if (state.apply({ tech: 'pair', statement: s.sid, hero: b }, [{ hero: b, keep: keepB }], [a])) return true;
   }
   return false;
 }
 
-function sight(state) {
+// A cell is out when it would take every remaining cell of another piece (all in its row or column).
+function block(state) {
   const { ctx, dom } = state;
-  const { S } = ctx;
-  for (let a = 0; a < ctx.k; a++) {
-    for (let b = 0; b < ctx.k; b++) {
-      if (a === b || dom[b].size === 1) continue; // a fixed hero is the 'fixed' technique
-      const keep = x => [...dom[b]].some(y => together(ctx, dom[S], x, y));
-      if (state.apply({ tech: 'sight', hero: a, other: b }, [{ hero: a, keep }], [b, S])) return true;
+  for (const a of PIECES(ctx)) {
+    for (const b of PIECES(ctx)) {
+      if (a === b || dom[b].size === 1) continue; // a fixed piece is the 'fixed' technique
+      const keep = x => [...dom[b]].some(y => apart(ctx, x, y));
+      if (state.apply({ tech: 'block', hero: a, other: b }, [{ hero: a, keep }], [b])) return true;
     }
   }
   return false;
 }
 
-// Two heroes with few cells left limit the safe: it must hide them from each other and not stand next to both.
-const HIDING_PAIRS = 16;
-function hiding(state) {
+// m pieces whose cells all lie in the same m rows (columns) fill those lines; nobody else can stand there.
+const MAX_SUBSET = 3;
+function subset(state) {
   const { ctx, dom } = state;
-  const { S } = ctx;
-  for (let a = 0; a < ctx.k; a++) {
-    for (let b = a + 1; b < ctx.k; b++) {
-      if (dom[a].size * dom[b].size > HIDING_PAIRS) continue;
-      const A = [...dom[a]], B = [...dom[b]];
-      const keep = s => A.some(x => B.some(y => okAt(ctx, s, x, y)));
-      const between = A.length === 1 && B.length === 1 && ctx.board.seesSet[A[0]].has(B[0]);
-      if (state.apply({ tech: 'hiding', hero: a, other: b, between }, [{ hero: S, keep }], [a, b])) return true;
+  const open = PIECES(ctx).filter(h => dom[h].size > 1);
+  for (const axis of ['row', 'col']) {
+    const of = axis === 'row' ? rowOf : colOf;
+    const lines = h => new Set([...dom[h]].map(c => of(ctx, c)));
+    for (let mask = 1; mask < 1 << open.length; mask++) {
+      const group = open.filter((_, i) => mask & (1 << i));
+      if (group.length < 2 || group.length > MAX_SUBSET) continue;
+      const union = new Set(group.flatMap(h => [...lines(h)]));
+      if (union.size < group.length) throw new Contradiction({ type: 'subset', axis, heroes: group });
+      if (union.size > group.length) continue;
+      const changes = PIECES(ctx).filter(g => !group.includes(g)).map(g => ({ hero: g, keep: c => !union.has(of(ctx, c)) }));
+      const step = { tech: 'subset', axis, heroes: group, lines: [...union].sort((p, q) => p - q) };
+      if (state.apply(step, changes, group)) return true;
     }
   }
   return false;
 }
 
-// `alone` / `zoneCount` count the subject, so a zone needs exactly n − 1 other heroes.
+// `alone` / `zoneCount` count the subject, so a zone needs exactly n − 1 other heroes (the safe is no hero).
 function zone(state) {
   const { ctx, dom } = state;
   const { board } = ctx;
   for (const s of ctx.zoneStatements) {
     const subject = s.who;
     const need = s.type === 'alone' ? 0 : s.n - 1;
-    const others = ALL(ctx).filter(g => g !== subject);
+    const others = HEROES(ctx).filter(g => g !== subject);
     const count = z => {
       let must = 0, could = 0;
       for (const g of others) {
@@ -322,7 +251,7 @@ function zone(state) {
       const { must, could } = count(board.zone[x]);
       return must <= need && must + could >= need;
     };
-    if (state.apply({ tech: 'zone', kind: 'subject', statement: s.sid, hero: subject }, [{ hero: subject, keep }], ALL(ctx))) return true;
+    if (state.apply({ tech: 'zone', kind: 'subject', statement: s.sid, hero: subject }, [{ hero: subject, keep }], HEROES(ctx))) return true;
     const zones = new Set([...dom[subject]].map(c => board.zone[c]));
     if (zones.size !== 1) continue;
     const [z] = zones;
@@ -333,31 +262,31 @@ function zone(state) {
     });
     if (could > 0 && must === need) {
       const changes = maybe.map(g => ({ hero: g, keep: c => board.zone[c] !== z }));
-      if (state.apply({ tech: 'zone', kind: 'full', statement: s.sid, hero: subject, zone: z }, changes, ALL(ctx))) return true;
+      if (state.apply({ tech: 'zone', kind: 'full', statement: s.sid, hero: subject, zone: z }, changes, HEROES(ctx))) return true;
     } else if (could > 0 && must + could === need) {
       const changes = maybe.map(g => ({ hero: g, keep: c => board.zone[c] === z }));
-      if (state.apply({ tech: 'zone', kind: 'fill', statement: s.sid, hero: subject, zone: z }, changes, ALL(ctx))) return true;
+      if (state.apply({ tech: 'zone', kind: 'fill', statement: s.sid, hero: subject, zone: z }, changes, HEROES(ctx))) return true;
     }
   }
   return false;
 }
 
-// When everything is fixed, R1/R2 and every statement are checked directly on the map with the safe in place.
+// When everything is fixed, the rules and every statement are checked directly.
 function checkComplete(state) {
   const { ctx, dom } = state;
   if (!dom.every(d => d.size === 1)) return;
   const [safe] = dom[ctx.S];
   const placement = dom.slice(0, ctx.k).map(d => [...d][0]);
-  const map = withSafe(ctx.puzzle, safe);
-  const thieves = placement.filter(c => ctx.maps.get(safe).safeSpot[c]).length;
+  if (safeOf(ctx.board, placement) !== safe) throw new Contradiction({ type: 'rules' });
+  const thieves = placement.filter(c => ctx.spots[safe].has(c)).length;
   if (thieves === 0) throw new Contradiction({ type: 'noThief' });
   if (thieves > 1) throw new Contradiction({ type: 'twoThieves' });
-  if (!isValidPlacement(map, placement)) throw new Contradiction({ type: 'rules' });
-  const bad = ctx.puzzle.statements.findIndex(s => !evaluate(map, placement, s));
+  if (!isValidPlacement(ctx.puzzle, placement)) throw new Contradiction({ type: 'rules' });
+  const bad = ctx.puzzle.statements.findIndex(s => !evaluate(ctx.puzzle, placement, s));
   if (bad >= 0) throw new Contradiction({ type: 'statement', statement: bad });
 }
 
-const TECHNIQUES = [fixed, thief, drone, pair, sight, hiding, zone];
+const TECHNIQUES = [fixed, line, thief, pair, block, subset, zone];
 
 function propagate(state) {
   for (;;) {
@@ -373,7 +302,7 @@ function propagate(state) {
 // Variables with the fewest cells first ("either here or there"), as a person would try.
 function trial(state) {
   const { ctx, dom } = state;
-  const order = [...ALL(ctx), ctx.S].filter(h => dom[h].size > 1).sort((a, b) => dom[a].size - dom[b].size || a - b);
+  const order = PIECES(ctx).filter(h => dom[h].size > 1).sort((a, b) => dom[a].size - dom[b].size || a - b);
   for (const h of order) {
     for (const x of [...dom[h]]) {
       const test = state.clone();
@@ -382,7 +311,7 @@ function trial(state) {
         propagate(test);
       } catch (e) {
         if (!(e instanceof Contradiction)) throw e;
-        state.apply({ tech: 'trial', hero: h, cell: x, reason: e.reason }, [{ hero: h, keep: c => c !== x }], [...ALL(ctx), ctx.S]);
+        state.apply({ tech: 'trial', hero: h, cell: x, reason: e.reason }, [{ hero: h, keep: c => c !== x }], PIECES(ctx));
         return true;
       }
     }
@@ -417,19 +346,17 @@ export function stepSolve(puzzle, { maxLevel = 3, facts = [] } = {}) {
   };
 }
 
-// Hint for the player's board (PLAN.md stages 3 and 8): a wrongly placed hero or safe first; otherwise the
-// chain of steps (from what is placed correctly) that fixes the next hero or the safe (hero k).
-export function nextHint(puzzle, placement, safe = -1) {
-  const k = puzzle.heroes.length;
+// Hint for the player's board: a wrongly placed hero first; otherwise the chain of steps (from the heroes
+// placed correctly) that fixes the next hero. The safe is never a target: it appears by itself.
+export function nextHint(puzzle, placement) {
   const wrong = placement.findIndex((c, h) => c >= 0 && c !== puzzle.solution[h]);
   if (wrong >= 0) return { kind: 'wrong', hero: wrong };
-  if (safe >= 0 && safe !== puzzle.safe) return { kind: 'wrong', hero: k };
-  if (placement.every(c => c >= 0) && safe >= 0) return { kind: 'done' };
+  if (placement.every(c => c >= 0)) return { kind: 'done' };
   const facts = placement.map((cell, hero) => ({ hero, cell })).filter(f => f.cell >= 0);
-  if (safe >= 0) facts.push({ hero: k, cell: safe });
   const { steps } = stepSolve(puzzle, { facts });
   const known = new Set(facts.map(f => f.hero));
-  // Replays the log to find the first step that leaves an unplaced variable a single cell.
+  known.add(puzzle.heroes.length);
+  // Replays the log to find the first step that leaves an unplaced hero a single cell.
   const remaining = initialDomains(setup(puzzle), facts);
   for (let i = 0; i < steps.length; i++) {
     for (const e of steps[i].effects) {
@@ -449,4 +376,26 @@ function chainOf(steps, target) {
   const todo = [target];
   while (todo.length) for (const d of steps[todo.pop()].deps) if (!keep.has(d)) { keep.add(d); todo.push(d); }
   return [...keep].sort((a, b) => a - b).map(i => steps[i]);
+}
+
+// Drone hint (RULES.md §7): one row or column of the solution not flown over yet, preferring lines whose
+// hero the player has not placed correctly. Returns { axis, index (0-based), hero (−1 = the safe) } or null.
+export function nextDrone(puzzle, placement, flown) {
+  const { n } = puzzle;
+  const k = puzzle.heroes.length;
+  const pieces = [...puzzle.solution, puzzle.safe];
+  const lines = [];
+  for (const axis of ['row', 'col']) {
+    for (let index = 0; index < n; index++) {
+      if (flown.some(f => f.axis === axis && f.index === index)) continue;
+      const p = pieces.findIndex(c => (axis === 'row' ? Math.floor(c / n) : c % n) === index);
+      const hero = p === k ? -1 : p;
+      lines.push({ axis, index, hero, open: hero < 0 ? placement.some(c => c < 0) : placement[hero] !== puzzle.solution[hero] });
+    }
+  }
+  const useful = lines.filter(l => l.open);
+  const pool = useful.length ? useful : lines;
+  if (!pool.length) return null;
+  const { axis, index, hero } = createRng(`${puzzle.seed}|drone|${flown.length}`).pick(pool);
+  return { axis, index, hero };
 }

@@ -5,7 +5,8 @@ witness statements. Cartoon arena-brawler visual style (bright colours, chunky o
 type, original heroes). **Top priority: correct logic** — every puzzle has exactly one solution,
 reachable by deduction without guessing.
 
-Guardrails (IP): not a recreation of Murdoku (no rook rule, no "last empty cell", no
+Guardrails (IP; rook rule and "last empty cell" allowed since stage 9 by owner decision, the
+"same room" thief rule stays excluded): not a recreation of Murdoku (no rook rule, no "last empty cell", no
 "same room as the victim", no polaroid look) and no Brawl Stars assets, names, logos, characters
 or modes — only the general cartoon-arena style.
 
@@ -407,6 +408,88 @@ Sequential: no agent runs alongside the main session on the same scope.
   - [x] Deploy (owner's go 2026-11-01): commit `7b06f26` pushed to `main`, Pages build `built`, live `sw.js` CACHE `ktozwinal-v2`; E2E against the live site 30/30 OK, no console errors (live copy waits for network idle before closing overlays).
   - [ ] Real-phone test by the owner.
 
+## Stage 9 — Rules v3: rows/columns like sudoku, safe on the last free cell `[x]` (owner request 2026-11-01; deploy pending the owner's go)
+
+Owner (2026-11-01): the safe must have exactly one possible cell, following from the heroes' placement;
+obstacles must not block sight ("jak w sudoku"); drones become an optional hint ("Wyślij drona"), every case
+solvable without them. Owner also asked for "thief = the only person in the safe's room"; declined (with
+rows/columns and the last free cell it is exactly Murdoku's core rule set, i.e. a recreation). Owner said they
+do not mind the similarity; the plan proceeds with the original thief rule offered earlier (diagonal).
+Safe-in-UI question not answered directly → default: the safe appears by itself once every hero is placed.
+
+Rules v3 (normative text → `RULES.md` v3):
+- `k = N − 1` heroes; **R1**: no two heroes in the same row or column (nothing blocks sight).
+- **Safe**: the only cell whose row and column hold no hero; it must be `ground`.
+- **R2 thief**: exactly one hero stands on a `thiefSpot` of the safe = a walkable diagonal neighbour in the
+  safe's zone. That hero is the thief.
+- Statements: as v2 minus drones and `sees safe`; `sees t` = a cell of type `t` in the hero's row or column.
+  Safe statements (direction, same/other zone) and `alarm` (≤ 1) stay.
+- Drone hint (UI, not a statement): reveals who stood in one row or column (or that the safe did); medium 1,
+  hard 2, expert 2, none on easy (standing decision); counts as a hint.
+- Contract v3: `version: 3`, `solution` = placement, `safe` derived (stored), `thief`, `grade`; storage
+  namespace `ktozwinal3:`; SW cache `ktozwinal-v3`; tutorial, missions and RULES examples rebuilt.
+
+| | P50 | P80 |
+|---|---|---|
+| Calendar time (critical path 9a → 9b → 9c → 9d → 9e → 9f) | 6 h | 9 h |
+| Agent effort (incl. review, reference and verification agents) | 8 h | 12 h |
+
+P80 risks: step-solver techniques for rooks (subsets) too weak → more trial puzzles; generator yield with the
+diagonal thief rule; rewriting tutorial/examples by hand. Excluded: owner decisions, phone test, deploy (only on go).
+
+- [x] **9a Spec** — `RULES.md` v3 (main session, opus); ambiguity review by 1 `sonnet` worker (read-only). 45–75 min.
+  Review: 11 items (3 HIGH: hero-labelled placements, Q5 scope, generator conventions vs reference) — all
+  applied to RULES (§1 zones ≥ 2 / thiefSpots in-grid, §2 injective map + "R0/R2 never choose the safe", §5
+  notes, Q5 "statement of the puzzle", conventions "not checked by the reference", 2-zone equivalence); the
+  Polish-wording items are already handled by `src/text.js` (genitive names); `sameZoneSafe` kept.
+- [x] **9b Engine** — `src/board.js` (`lineTypes`, `thiefSpots`, `safeOf`; no `withSafe`), `src/statements.js`
+  (safe derived from the placement), `src/solver.js` (the safe is piece k: N pieces, one per row/column; R2 in
+  `feasible`); in parallel `tests/reference.js` by 1 `sonnet` worker from RULES only (self-test OK, 6×6 all
+  candidates 282 ms). Evidence: own brute force 253 random boards 0 mismatches; generated easy ×10 + medium ×3
+  unique by `refSolve`, all valid/true by the reference.
+- [x] **9c Step solver + texts** — `src/steps.js` (L1 statements/fixed/line/thief, L2 pair/block/subset ≤ 3/zone,
+  L3 trial; `nextHint` targets heroes only; `nextDrone`), `src/text.js` (`droneText`, step texts for every
+  technique/contradiction; drone statements removed). Evidence: 100 puzzles, every step kind printed, no
+  `undefined`/`NaN`.
+- [x] **9d Generator + tests** — `src/generator.js` (v3 contract, rook placement with R0–R2, no drone statements;
+  10 seeds/difficulty: easy median 11 ms, medium 39 ms, hard 24 ms, expert 72 ms, max 112 ms; hard/expert mostly
+  level 3); tests `helpers`/`solver`/`steps`/`generator` rewritten by 1 `sonnet` worker (22 tests, incl. a
+  pruned reference brute force for n ≥ 7, no production bug found); `missions`/`examples`/fixtures by the main
+  session. Evidence: `npm test` 32/32, 20.6 s. Noted: `row`/`col` clues (weight 0.3) are rare in v3
+  (1/40 hard, 4/40 medium) — accepted, the coverage test counts them over hard + medium.
+- [x] **9e UI + data** — `ui/app.js` (rows/columns shading and conflicts, the safe appears on the last free
+  crossing, check reports R0/R2, drone hint button medium 1 / hard 2 / expert 2 with report cards, storage
+  `ktozwinal3:` dropping v1/v2 keys, rules + tutorial texts), CSS (disabled button), `sw.js` cache v3, readme;
+  tutorial (4×4, 3 heroes, = RULES §8.1), missions re-frozen v3 from the same seeds (v2 files deleted on
+  purpose), RULES §8.1/§8.2 hand deductions checked against the step log (bare candidates 126 / 1 104 by solver
+  and reference). Evidence: E2E `scratchpad/e2e-v3.mjs` in Chrome 28/28 OK, no console errors.
+- [x] **9f Verification** — two independent flows (Workflow `verify-rules-v3`, 9 agents: 2 × (opus split + 2 sonnet
+  workers + opus consolidate) + opus comparison; flow B independent until the comparison). Both: 0 BLOCKER,
+  0 MAJOR. Evidence: evaluators vs reference 3.37 M evaluate calls / 160 800 placements on 67 production boards
+  0 mismatches; solver exact vs reference; 163 production puzzles pass Q1/Q2/Q4/conventions, Q5 (proven n ≤ 6,
+  sampled n ≥ 7), determinism; missions reproduce byte-for-byte; step solver sound on 163 puzzles + 630 reduced
+  statement sets; 2 852 hints + 208 wrong-hero hints OK; drone reports true; ~108 k UI perturbations, no false win;
+  RULES §8 deductions match. 11 MINOR, reconciled:
+  fixed — (B1) `thief:safe` text also names "ktoś nie miałby gdzie stanąć" (the `!cells.length` case);
+  (B2) check messages say "w jego strefie"; (B3) R0 message „ostatnie wolne pole nie jest gołą ziemią”;
+  (B4) tutorial mentions ground; (B5) RULES §7 „tam stał sejf” = code; (A3) maxLevel per difficulty pinned
+  literally in `tests/generator.test.js`; (A2) test: safe statements false without a single safe cell.
+  Accepted, not changed — (A1) no generator test with a forced tiny node budget (the comparison showed Q3
+  rejects non-unique sets anyway: 25/25 unique with budgets of 30 nodes); (A4) `thiefOf` without a safe throws,
+  unreachable (callers validate first; no validation for impossible input); (B6) the safe token is drawn even
+  when the crossing is not ground (check explains it); (B7) saves carry no puzzle hash — bump the namespace when
+  shipped puzzles change. Evidence after the fixes: `npm test` 33/33 (20.6 s); E2E `e2e-v3.mjs` 28/28 OK, no
+  console errors; final diff re-read by the main session (text/test-only fixes).
+- [x] **9g Placement block** (owner request 2026-11-01: "jak w sudoku: postawienie ludzika powoduje, że w tym
+  samym rzędzie i kolumnie już nic nie postawimy") — `ui/app.js` `onCell` refuses a cell in another placed
+  hero's row or column (toast names that hero; the selected hero may move within its own row/column; crosses
+  still allowed); help text says the red cells are closed. Small low-risk change (1 file, ~8 lines, UI only, no
+  contract) → one `sonnet` verifier. Estimate 20–30 min. Evidence so far: `npm test` 33/33 (21.1 s); E2E
+  `scratchpad/e2e-block.mjs` (= `e2e-v3.mjs` with the conflict scenario replaced by row/column/own-row/cross
+  checks) 33/33 OK in Chrome, no console errors. Verifier (`sonnet`, read-only): OK, 0 findings; other placement
+  writers (hint, undo, saves) cannot create a row/column clash in play; `conflicts()` kept as a guard for old
+  local `ktozwinal3:` saves.
+
 ## Checkpoint log
 
 - 2026-10-31 — Stage 0 done; plan created. Next: stage 1 (`RULES.md`).
@@ -456,3 +539,6 @@ Sequential: no agent runs alongside the main session on the same scope.
   empty. Stage 2b done, elapsed ~2 h (P50 1.5 h, P80 2.5 h; variance: verification fixes + worker).
   Not deployed: GitHub Pages still serves the previous commit until the owner asks to commit and push.
   Next: stage 3 (step solver, difficulty, hints).
+- 2026-11-01 — Stage 9 planned (rules v3: rows/columns, safe on the last free cell, diagonal thief, drone hint). Next: 9a.
+- 2026-11-01 — Stage 9 done (rules v3), verified (two flows, 0 BLOCKER/MAJOR, 7 MINOR fixed, 4 accepted); `npm test` 33/33, E2E 28/28. Not committed, not deployed: waiting for the owner's go. Next: owner's phone test.
+- 2026-11-01 — 9g done (sudoku-like placement block in the UI), verified (`npm test` 33/33, E2E 33/33, 1 verifier OK). Not committed, not deployed: waiting for the owner's go.

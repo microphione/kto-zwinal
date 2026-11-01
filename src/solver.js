@@ -1,8 +1,9 @@
 // Exact solver: backtracking with forward checking on 64-bit cell masks (two int32 words, n ≤ 8).
-// Every placement it returns is re-checked with the plain evaluators (isValidPlacement + evaluate).
-// `solve` works on the map with the safe in place; `solveHidden` branches over the hidden safe's cell.
-import { getBoard, droneScan, withSafe, safeCandidates } from './board.js';
-import { UNARY, PAIR, unaryHolds, pairHolds, evaluate, isValidPlacement } from './statements.js';
+// The safe is searched as one more piece (index k): heroes and the safe are N pieces in N rows and N columns,
+// one per row and column (RULES.md §2, R1). Every placement returned is re-checked with the plain evaluators
+// (isValidPlacement + evaluate).
+import { getBoard } from './board.js';
+import { UNARY, PAIR, SAFE_PAIR, unaryHolds, pairHolds, evaluate, isValidPlacement } from './statements.js';
 
 function popcount(x) {
   x -= (x >>> 1) & 0x55555555;
@@ -26,30 +27,37 @@ function maskOf(cells) {
   return [lo, hi];
 }
 
-// Masks that depend only on the map (and the statement kind), kept per board: `solveHidden` builds the same
-// tables for every safe cell again and again while the generator samples.
+// Masks that depend only on the map (and the statement kind), kept per board.
 const tables = new WeakMap();
 function boardTables(board) {
   let t = tables.get(board);
   if (!t) {
-    const { size } = board;
-    // Cells that become unavailable to everyone else once a hero stands on `i` (itself + its sight).
+    const { size, n } = board;
+    // Cells unavailable to every other piece once a piece stands on `i`: its row and column.
     const blockLo = new Int32Array(size), blockHi = new Int32Array(size);
-    for (let i = 0; i < size; i++) [blockLo[i], blockHi[i]] = maskOf([i, ...board.sees[i]]);
-    const [safeLo, safeHi] = maskOf(board.safeSpots);
+    const spotLo = new Int32Array(size), spotHi = new Int32Array(size);
+    for (let i = 0; i < size; i++) {
+      const r = Math.floor(i / n), c = i % n;
+      const line = [];
+      for (let x = 0; x < n; x++) line.push(r * n + x, x * n + c);
+      [blockLo[i], blockHi[i]] = maskOf(line);
+      [spotLo[i], spotHi[i]] = maskOf(board.thiefSpots[i]);
+    }
     const zoneLo = [], zoneHi = [];
     for (const cells of board.zoneCells) {
       const [lo, hi] = maskOf(cells);
       zoneLo.push(lo);
       zoneHi.push(hi);
     }
-    t = { blockLo, blockHi, safeLo, safeHi, zoneLo, zoneHi, all: maskOf(board.walkCells), unary: new Map(), pair: new Map() };
+    // R0 + R2: the safe stands on ground with at least one thief spot.
+    const safeCells = board.walkCells.filter(s => board.type[s] === 'ground' && board.thiefSpots[s].length > 0);
+    t = { blockLo, blockHi, spotLo, spotHi, zoneLo, zoneHi, all: maskOf(board.walkCells), safeCells, unary: new Map(), pair: new Map() };
     tables.set(board, t);
   }
   return t;
 }
 
-// Walkable cells where a unary statement holds (its subject is irrelevant).
+// Walkable cells where a statement about the subject's own cell holds.
 function unaryMask(board, t, st) {
   const id = `${st.type}|${st.zone}|${st.cellType}|${st.n}`;
   let m = t.unary.get(id);
@@ -74,22 +82,24 @@ function pairTables(board, t, type) {
   return p;
 }
 
+// Returns { solutions: [placement], nodes, aborted }; the safe cell of a solution is `safeOf(board, placement)`.
 // `rng` (optional) randomises the cell order, used by the generator to sample diverse solutions.
 // `maxNodes` bounds the search; `aborted: true` means the result is incomplete (proves nothing).
 export function solve(puzzle, limit = 2, rng = null, maxNodes = Infinity) {
   const board = getBoard(puzzle);
   const k = puzzle.heroes.length;
+  const S = k;
+  const pieces = k + 1;
   const statements = puzzle.statements;
-  if (statements.some(st => st.type === 'alarm' && board.zone[board.safe] !== st.zone)) return { solutions: [], nodes: 0, aborted: false };
 
   const t = boardTables(board);
-  const { blockLo, blockHi, safeLo, safeHi, zoneLo, zoneHi } = t;
+  const { blockLo, blockHi, spotLo, spotHi, zoneLo, zoneHi } = t;
   const [allLo, allHi] = t.all;
-  const domLo = new Int32Array(k), domHi = new Int32Array(k);
+  const domLo = new Int32Array(pieces), domHi = new Int32Array(pieces);
   for (let h = 0; h < k; h++) {
     let lo = allLo, hi = allHi;
     for (const st of statements) {
-      if (st.who !== h || !UNARY.has(st.type)) continue;
+      if (st.who !== h || !UNARY.has(st.type) || SAFE_PAIR[st.type]) continue;
       const m = unaryMask(board, t, st);
       lo &= m[0];
       hi &= m[1];
@@ -97,31 +107,33 @@ export function solve(puzzle, limit = 2, rng = null, maxNodes = Infinity) {
     domLo[h] = lo;
     domHi[h] = hi;
   }
+  const alarms = statements.filter(st => st.type === 'alarm');
+  [domLo[S], domHi[S]] = maskOf(t.safeCells.filter(s => alarms.every(st => board.zone[s] === st.zone)));
 
-  // links[h * k + g]: tables T with T[x] = cells allowed for g when h stands on x.
-  const links = Array.from({ length: k * k }, () => []);
+  // links[a * pieces + b]: tables T with T[x] = cells allowed for b when a stands on x.
+  const links = Array.from({ length: pieces * pieces }, () => []);
+  const link = (type, a, b) => {
+    const { fwd, bwd } = pairTables(board, t, type);
+    links[a * pieces + b].push(fwd);
+    links[b * pieces + a].push(bwd);
+  };
   for (const st of statements) {
-    if (!PAIR.has(st.type)) continue;
-    const { fwd, bwd } = pairTables(board, t, st.type);
-    links[st.who * k + st.hero].push(fwd);
-    links[st.hero * k + st.who].push(bwd);
+    if (PAIR.has(st.type)) link(st.type, st.who, st.hero);
+    else if (SAFE_PAIR[st.type]) link(SAFE_PAIR[st.type], st.who, S);
   }
   const linked = [];
-  for (let a = 0; a < k; a++) for (let b = 0; b < k; b++) if (a !== b && links[a * k + b].length) linked.push([a, b]);
+  for (let a = 0; a < pieces; a++) for (let b = 0; b < pieces; b++) if (a !== b && links[a * pieces + b].length) linked.push([a, b]);
 
-  const alone = new Array(k).fill(false);
+  const alone = new Array(pieces).fill(false);
   for (const st of statements) if (st.type === 'alone') alone[st.who] = true;
   const zoneCounts = statements.filter(st => st.type === 'zoneCount');
-  const drones = statements.filter(st => st.type === 'drone').map(st => {
-    const [lo, hi] = maskOf(droneScan(board, st.side, st.index));
-    return { n: st.n, lo, hi };
-  });
 
-  const assigned = new Array(k).fill(-1);
+  const assigned = new Array(pieces).fill(-1);
   const solutions = [];
   let nodes = 0;
   let aborted = false;
 
+  // Heroes surely / possibly on the cells of a mask.
   const countIn = (lo, hi, dLo, dHi) => {
     let have = 0, could = 0;
     for (let h = 0; h < k; h++) {
@@ -134,8 +146,11 @@ export function solve(puzzle, limit = 2, rng = null, maxNodes = Infinity) {
   };
 
   const feasible = (dLo, dHi) => {
-    const [thieves, couldSteal] = countIn(safeLo, safeHi, dLo, dHi);
-    if (thieves === 0 && couldSteal === 0) return false;
+    const s = assigned[S];
+    if (s >= 0) {
+      const [thieves, could] = countIn(spotLo[s], spotHi[s], dLo, dHi);
+      if (thieves > 1 || thieves + could === 0) return false;
+    }
     for (const st of zoneCounts) {
       const cell = assigned[st.who];
       if (cell < 0) continue;
@@ -143,22 +158,18 @@ export function solve(puzzle, limit = 2, rng = null, maxNodes = Infinity) {
       const [have, could] = countIn(zoneLo[z], zoneHi[z], dLo, dHi);
       if (have > st.n || have + could < st.n) return false;
     }
-    for (const dr of drones) {
-      const [have, could] = countIn(dr.lo, dr.hi, dLo, dHi);
-      if (have > dr.n || have + could < dr.n) return false;
-    }
     return true;
   };
 
-  // One pass of arc consistency over pair statements between unplaced heroes.
+  // One pass of arc consistency over pair statements between unplaced pieces.
   const revise = (dLo, dHi) => {
     for (const [a, b] of linked) {
       if (assigned[a] >= 0 || assigned[b] >= 0) continue;
       let lo = 0, hi = 0;
       for (const x of cellsOf(dLo[a], dHi[a])) {
         let ok = true;
-        for (const t of links[a * k + b]) {
-          if (((t.lo[x] & dLo[b]) | (t.hi[x] & dHi[b])) === 0) { ok = false; break; }
+        for (const tb of links[a * pieces + b]) {
+          if (((tb.lo[x] & dLo[b]) | (tb.hi[x] & dHi[b])) === 0) { ok = false; break; }
         }
         if (ok) {
           if (x < 32) lo |= 1 << x;
@@ -174,13 +185,13 @@ export function solve(puzzle, limit = 2, rng = null, maxNodes = Infinity) {
 
   const search = (dLo, dHi) => {
     let h = -1, best = Infinity;
-    for (let g = 0; g < k; g++) {
+    for (let g = 0; g < pieces; g++) {
       if (assigned[g] >= 0) continue;
       const size2 = popcount(dLo[g]) + popcount(dHi[g]);
       if (size2 < best) { best = size2; h = g; }
     }
     if (h < 0) {
-      const placement = assigned.slice();
+      const placement = assigned.slice(0, k);
       if (isValidPlacement(puzzle, placement) && statements.every(st => evaluate(puzzle, placement, st))) solutions.push(placement);
       return;
     }
@@ -188,16 +199,15 @@ export function solve(puzzle, limit = 2, rng = null, maxNodes = Infinity) {
     for (const x of rng ? rng.shuffle(order) : order) {
       if (++nodes > maxNodes) { aborted = true; return; }
       const z = board.zone[x];
-      if (alone[h] && assigned.some((y, g) => g !== h && y >= 0 && board.zone[y] === z)) continue;
+      if (h < k && alone[h] && assigned.some((y, g) => g !== h && g < k && y >= 0 && board.zone[y] === z)) continue;
       assigned[h] = x;
       const nLo = dLo.slice(), nHi = dHi.slice();
       let ok = true;
-      for (let g = 0; g < k && ok; g++) {
+      for (let g = 0; g < pieces && ok; g++) {
         if (assigned[g] >= 0) continue;
         let lo = nLo[g] & ~blockLo[x], hi = nHi[g] & ~blockHi[x];
-        if (board.safeSpot[x]) { lo &= ~safeLo; hi &= ~safeHi; }
-        if (alone[h] || alone[g]) { lo &= ~zoneLo[z]; hi &= ~zoneHi[z]; }
-        for (const t of links[h * k + g]) { lo &= t.lo[x]; hi &= t.hi[x]; }
+        if (h < k && g < k && (alone[h] || alone[g])) { lo &= ~zoneLo[z]; hi &= ~zoneHi[z]; }
+        for (const tb of links[h * pieces + g]) { lo &= tb.lo[x]; hi &= tb.hi[x]; }
         if ((lo | hi) === 0) ok = false;
         nLo[g] = lo;
         nHi[g] = hi;
@@ -208,28 +218,10 @@ export function solve(puzzle, limit = 2, rng = null, maxNodes = Infinity) {
     }
   };
 
-  if (feasible(domLo, domHi)) search(domLo, domHi);
+  if (pieces === board.n && (domLo[S] | domHi[S]) !== 0 && feasible(domLo, domHi)) search(domLo, domHi);
   return { solutions, nodes, aborted };
 }
 
-// Solutions { safe, placement } of a puzzle with a hidden safe (RULES.md §2); the node budget is shared by
-// all safe cells. `rng` also randomises the order of the safe cells.
-export function solveHidden(puzzle, limit = 2, rng = null, maxNodes = Infinity) {
-  const alarms = puzzle.statements.filter(st => st.type === 'alarm');
-  const board = getBoard(puzzle);
-  const safes = safeCandidates(puzzle).filter(s => alarms.every(st => board.zone[s] === st.zone));
-  const solutions = [];
-  let nodes = 0;
-  for (const safe of rng ? rng.shuffle(safes) : safes) {
-    const res = solve(withSafe(puzzle, safe), limit - solutions.length, rng, maxNodes - nodes);
-    nodes += res.nodes;
-    for (const placement of res.solutions) solutions.push({ safe, placement });
-    if (res.aborted) return { solutions, nodes, aborted: true };
-    if (solutions.length >= limit) break;
-  }
-  return { solutions, nodes, aborted: false };
-}
-
 export function countSolutions(puzzle, limit = 2) {
-  return solveHidden(puzzle, limit).solutions.length;
+  return solve(puzzle, limit).solutions.length;
 }

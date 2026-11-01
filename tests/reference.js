@@ -1,223 +1,191 @@
-// Independent brute-force reference for RULES.md v2 (hidden safe). Shares no code with src/.
-// Clarity over speed: every predicate is a literal reading of the spec.
+// Independent brute-force reference for RULES.md v3 (rows and columns, safe on the last free cell).
+// Shares no code with src/. Clarity over speed: every predicate is a literal reading of the spec.
+// Cell index = r * n + c (0-based); RULES rows/columns (`row`/`col` parameters) are 1-based.
 
-const OBSTACLES = ['crate', 'barrel', 'rock'];
 
-// Type of a cell on the map with the safe in place.
-function typeAt(puzzle, safe, idx) {
-  if (idx === safe) return 'safe';
-  const n = puzzle.n;
-  return puzzle.cells[Math.floor(idx / n)][idx % n];
+function rowOf(puzzle, cell) { return Math.floor(cell / puzzle.n); }
+function colOf(puzzle, cell) { return cell % puzzle.n; }
+function typeOf(puzzle, cell) { return puzzle.cells[rowOf(puzzle, cell)][colOf(puzzle, cell)]; }
+function zoneOf(puzzle, cell) { return puzzle.zones[rowOf(puzzle, cell)][colOf(puzzle, cell)]; }
+function isWalkable(puzzle, cell) {
+  const t = typeOf(puzzle, cell);
+  return t === 'ground' || t === 'bush' || t === 'pad';
 }
 
-function isBlocking(puzzle, safe, idx) {
-  const t = typeAt(puzzle, safe, idx);
-  return t === 'safe' || OBSTACLES.includes(t);
-}
-
-const isWalkable = (puzzle, safe, idx) => !isBlocking(puzzle, safe, idx);
-const rowOf = (puzzle, idx) => Math.floor(idx / puzzle.n);
-const colOf = (puzzle, idx) => idx % puzzle.n;
-const zoneOf = (puzzle, idx) => puzzle.zones[rowOf(puzzle, idx)][colOf(puzzle, idx)];
-
-// Orthogonally adjacent AND same zone (diagonals never).
-function neighbours(puzzle, idx) {
-  const n = puzzle.n;
-  const r = rowOf(puzzle, idx);
-  const c = colOf(puzzle, idx);
+// Orthogonally adjacent cells in the same zone (§1).
+function neighbours(puzzle, cell) {
+  const r = rowOf(puzzle, cell), c = colOf(puzzle, cell);
   const out = [];
   for (const [dr, dc] of [[-1, 0], [1, 0], [0, -1], [0, 1]]) {
-    const rr = r + dr;
-    const cc = c + dc;
-    if (rr < 0 || rr >= n || cc < 0 || cc >= n) continue;
-    if (puzzle.zones[rr][cc] === puzzle.zones[r][c]) out.push(rr * n + cc);
+    const rr = r + dr, cc = c + dc;
+    if (rr < 0 || rr >= puzzle.n || cc < 0 || cc >= puzzle.n) continue;
+    const other = rr * puzzle.n + cc;
+    if (zoneOf(puzzle, other) === zoneOf(puzzle, cell)) out.push(other);
   }
   return out;
 }
 
-// §3: same row/column and every cell strictly between is walkable.
-function sees(puzzle, safe, a, b) {
-  if (a === b) return false;
-  const ra = rowOf(puzzle, a), ca = colOf(puzzle, a);
-  const rb = rowOf(puzzle, b), cb = colOf(puzzle, b);
-  if (ra !== rb && ca !== cb) return false;
-  const dr = Math.sign(rb - ra);
-  const dc = Math.sign(cb - ca);
-  let r = ra + dr;
-  let c = ca + dc;
-  while (r !== rb || c !== cb) {
-    if (isBlocking(puzzle, safe, r * puzzle.n + c)) return false;
-    r += dr;
-    c += dc;
+// Diagonally adjacent, walkable, same zone as `cell` (§1).
+function thiefSpots(puzzle, cell) {
+  const r = rowOf(puzzle, cell), c = colOf(puzzle, cell);
+  const out = [];
+  for (const dr of [-1, 1]) {
+    for (const dc of [-1, 1]) {
+      const rr = r + dr, cc = c + dc;
+      if (rr < 0 || rr >= puzzle.n || cc < 0 || cc >= puzzle.n) continue;
+      const other = rr * puzzle.n + cc;
+      if (isWalkable(puzzle, other) && zoneOf(puzzle, other) === zoneOf(puzzle, cell)) out.push(other);
+    }
   }
+  return out;
+}
+
+// §2: the crossing of the only hero-free row and the only hero-free column, else -1.
+export function refSafe(puzzle, placement) {
+  const n = puzzle.n;
+  const freeRows = [];
+  const freeCols = [];
+  for (let r = 0; r < n; r++) {
+    if (!placement.some((cell) => rowOf(puzzle, cell) === r)) freeRows.push(r);
+  }
+  for (let c = 0; c < n; c++) {
+    if (!placement.some((cell) => colOf(puzzle, cell) === c)) freeCols.push(c);
+  }
+  if (freeRows.length !== 1 || freeCols.length !== 1) return -1;
+  return freeRows[0] * n + freeCols[0];
+}
+
+// Heroes standing on a thiefSpot of the safe.
+function heroesOnSpots(puzzle, placement, safe) {
+  const spots = thiefSpots(puzzle, safe);
+  const out = [];
+  for (let h = 0; h < placement.length; h++) {
+    if (spots.includes(placement[h])) out.push(h);
+  }
+  return out;
+}
+
+// Candidate test: injective on walkable cells, k = n - 1, R1, R0, R2.
+export function refValid(puzzle, placement) {
+  const n = puzzle.n;
+  const k = puzzle.heroes.length;
+  if (placement.length !== k || k !== n - 1) return false;
+  for (const cell of placement) {
+    if (!Number.isInteger(cell) || cell < 0 || cell >= n * n) return false;
+    if (!isWalkable(puzzle, cell)) return false;
+  }
+  for (let a = 0; a < k; a++) {
+    for (let b = a + 1; b < k; b++) {
+      if (placement[a] === placement[b]) return false; // distinct cells
+      // R1: no two heroes in the same row or column
+      if (rowOf(puzzle, placement[a]) === rowOf(puzzle, placement[b])) return false;
+      if (colOf(puzzle, placement[a]) === colOf(puzzle, placement[b])) return false;
+    }
+  }
+  const safe = refSafe(puzzle, placement);
+  if (safe === -1) return false;
+  if (typeOf(puzzle, safe) !== 'ground') return false; // R0
+  if (heroesOnSpots(puzzle, placement, safe).length !== 1) return false; // R2
   return true;
 }
 
-function safeSpots(puzzle, safe) {
-  return neighbours(puzzle, safe).filter((i) => isWalkable(puzzle, safe, i));
+// R2: the one hero standing on a thiefSpot of the safe (assumes a valid placement).
+export function refThief(puzzle, placement) {
+  const safe = refSafe(puzzle, placement);
+  return heroesOnSpots(puzzle, placement, safe)[0];
 }
 
-// §5.1: first blocking cell in each of the 4 directions; its type, or null.
-function seenTypes(puzzle, safe, cell) {
-  const n = puzzle.n;
-  const out = [];
-  for (const [dr, dc] of [[-1, 0], [1, 0], [0, -1], [0, 1]]) {
-    let r = rowOf(puzzle, cell) + dr;
-    let c = colOf(puzzle, cell) + dc;
-    while (r >= 0 && r < n && c >= 0 && c < n) {
-      const idx = r * n + c;
-      if (isBlocking(puzzle, safe, idx)) {
-        out.push(typeAt(puzzle, safe, idx));
-        break;
+function zoneHeroes(puzzle, placement, hero) {
+  const z = zoneOf(puzzle, placement[hero]);
+  return placement.filter((cell) => zoneOf(puzzle, cell) === z).length;
+}
+
+// §5: truth of one statement in a placement (assumes a valid placement).
+export function refEval(puzzle, placement, st) {
+  if (st.type === 'alarm') {
+    return zoneOf(puzzle, refSafe(puzzle, placement)) === st.zone;
+  }
+  const s = placement[st.who];
+  const sr = rowOf(puzzle, s) + 1; // 1-based as in RULES
+  const sc = colOf(puzzle, s) + 1;
+  const h = st.hero === undefined ? undefined : placement[st.hero];
+  const safe = refSafe(puzzle, placement);
+  switch (st.type) {
+    case 'inZone': return zoneOf(puzzle, s) === st.zone;
+    case 'notInZone': return zoneOf(puzzle, s) !== st.zone;
+    case 'on': return typeOf(puzzle, s) === st.cellType;
+    case 'nextTo': return neighbours(puzzle, s).some((x) => typeOf(puzzle, x) === st.cellType);
+    case 'notNextTo': return !neighbours(puzzle, s).some((x) => typeOf(puzzle, x) === st.cellType);
+    case 'sees': {
+      for (let cell = 0; cell < puzzle.n * puzzle.n; cell++) {
+        if (typeOf(puzzle, cell) !== st.cellType) continue;
+        if (rowOf(puzzle, cell) + 1 === sr || colOf(puzzle, cell) + 1 === sc) return true;
       }
-      r += dr;
-      c += dc;
+      return false;
     }
-  }
-  return out;
-}
-
-// §5.2: cells covered by a drone scan.
-function droneCells(puzzle, safe, side, index) {
-  const n = puzzle.n;
-  const i = index - 1;
-  let r, c, dr, dc;
-  if (side === 'W') { r = i; c = 0; dr = 0; dc = 1; }
-  else if (side === 'E') { r = i; c = n - 1; dr = 0; dc = -1; }
-  else if (side === 'N') { r = 0; c = i; dr = 1; dc = 0; }
-  else { r = n - 1; c = i; dr = -1; dc = 0; }
-  const cells = [];
-  while (r >= 0 && r < n && c >= 0 && c < n && !isBlocking(puzzle, safe, r * n + c)) {
-    cells.push(r * n + c);
-    r += dr;
-    c += dc;
-  }
-  return cells;
-}
-
-export function refEval(puzzle, safe, placement, st) {
-  const P = puzzle;
-  const k = placement.length;
-  // Global statements first (no subject).
-  if (kindOf(st) === 'drone') {
-    const cells = droneCells(P, safe, st.side, st.index);
-    let count = 0;
-    for (const h of placement) if (cells.includes(h)) count++;
-    return count === st.n;
-  }
-  if (kindOf(st) === 'alarm') return zoneOf(P, safe) === st.zone;
-
-  const me = placement[st.who];
-  const heroesInZone = (z) => placement.filter((h) => zoneOf(P, h) === z).length;
-  switch (kindOf(st)) {
-    case 'inZone': return zoneOf(P, me) === st.zone;
-    case 'notInZone': return zoneOf(P, me) !== st.zone;
-    case 'on': return typeAt(P, safe, me) === st.cellType;
-    case 'nextTo':
-      return neighbours(P, me).some((i) => typeAt(P, safe, i) === st.cellType);
-    case 'notNextTo':
-      return !neighbours(P, me).some((i) => typeAt(P, safe, i) === st.cellType);
-    case 'sees': return seenTypes(P, safe, me).includes(st.cellType);
-    case 'row': return rowOf(P, me) + 1 === st.n;
-    case 'col': return colOf(P, me) + 1 === st.n;
-    case 'northOf': return rowOf(P, me) < rowOf(P, placement[st.hero]);
-    case 'southOf': return rowOf(P, me) > rowOf(P, placement[st.hero]);
-    case 'westOf': return colOf(P, me) < colOf(P, placement[st.hero]);
-    case 'eastOf': return colOf(P, me) > colOf(P, placement[st.hero]);
-    case 'alone': return heroesInZone(zoneOf(P, me)) === 1;
-    case 'zoneCount': return heroesInZone(zoneOf(P, me)) === st.n;
-    case 'sameZone': return zoneOf(P, me) === zoneOf(P, placement[st.hero]);
-    case 'otherZone': return zoneOf(P, me) !== zoneOf(P, placement[st.hero]);
-    case 'northOfSafe': return rowOf(P, me) < rowOf(P, safe);
-    case 'southOfSafe': return rowOf(P, me) > rowOf(P, safe);
-    case 'westOfSafe': return colOf(P, me) < colOf(P, safe);
-    case 'eastOfSafe': return colOf(P, me) > colOf(P, safe);
-    case 'sameZoneSafe': return zoneOf(P, me) === zoneOf(P, safe);
-    case 'otherZoneSafe': return zoneOf(P, me) !== zoneOf(P, safe);
-    default: throw new Error(`refEval: unknown statement type ${kindOf(st)} (k=${k})`);
+    case 'row': return sr === st.n;
+    case 'col': return sc === st.n;
+    case 'northOf': return sr < rowOf(puzzle, h) + 1;
+    case 'southOf': return sr > rowOf(puzzle, h) + 1;
+    case 'westOf': return sc < colOf(puzzle, h) + 1;
+    case 'eastOf': return sc > colOf(puzzle, h) + 1;
+    case 'alone': return zoneHeroes(puzzle, placement, st.who) === 1;
+    case 'zoneCount': return zoneHeroes(puzzle, placement, st.who) === st.n;
+    case 'sameZone': return zoneOf(puzzle, s) === zoneOf(puzzle, h);
+    case 'otherZone': return zoneOf(puzzle, s) !== zoneOf(puzzle, h);
+    case 'northOfSafe': return sr < rowOf(puzzle, safe) + 1;
+    case 'southOfSafe': return sr > rowOf(puzzle, safe) + 1;
+    case 'westOfSafe': return sc < colOf(puzzle, safe) + 1;
+    case 'eastOfSafe': return sc > colOf(puzzle, safe) + 1;
+    case 'sameZoneSafe': return zoneOf(puzzle, s) === zoneOf(puzzle, safe);
+    case 'otherZoneSafe': return zoneOf(puzzle, s) !== zoneOf(puzzle, safe);
+    default: throw new Error(`unknown statement type ${st.type}`);
   }
 }
 
-export function refValid(puzzle, safe, placement) {
-  if (typeAt(puzzle, -1, safe) !== 'ground') return false;
-  if (new Set(placement).size !== placement.length) return false;
-  for (const h of placement) {
-    if (!Number.isInteger(h) || h < 0 || h >= puzzle.n * puzzle.n) return false;
-    if (!isWalkable(puzzle, safe, h)) return false;
-  }
-  for (let a = 0; a < placement.length; a++) {
-    for (let b = a + 1; b < placement.length; b++) {
-      if (sees(puzzle, safe, placement[a], placement[b])) return false; // R1
-    }
-  }
-  const spots = safeSpots(puzzle, safe);
-  return placement.filter((h) => spots.includes(h)).length === 1; // R2
-}
+const candidateCache = new WeakMap();
 
-export function refThief(puzzle, safe, placement) {
-  const spots = safeSpots(puzzle, safe);
-  return placement.findIndex((h) => spots.includes(h));
-}
-
-// Enumerate every (safe, placement) satisfying R1 and R2, calling visit(safe, placement).
-function forEachCandidate(puzzle, visit) {
-  const total = puzzle.n * puzzle.n;
-  const k = puzzle.heroes.length;
-  for (let safe = 0; safe < total; safe++) {
-    if (typeAt(puzzle, -1, safe) !== 'ground') continue;
-    const spots = safeSpots(puzzle, safe);
-    if (spots.length === 0) continue;
-    const walkable = [];
-    for (let i = 0; i < total; i++) if (isWalkable(puzzle, safe, i)) walkable.push(i);
-    const placement = [];
-    const rec = () => {
-      if (placement.length === k) {
-        if (placement.filter((h) => spots.includes(h)).length === 1) {
-          visit(safe, placement.slice());
-        }
-        return;
-      }
-      for (const cell of walkable) {
-        if (placement.includes(cell)) continue;
-        if (placement.some((o) => sees(puzzle, safe, o, cell))) continue; // R1 prune
-        placement.push(cell);
-        rec();
-        placement.pop();
-      }
-    };
-    rec();
-  }
-}
-
-export function refSolve(puzzle) {
-  const out = [];
-  forEachCandidate(puzzle, (safe, placement) => {
-    if (puzzle.statements.every((st) => refEval(puzzle, safe, placement, st))) {
-      out.push({ safe, placement });
-    }
-  });
-  return out;
-}
-
+// All placements satisfying R1 + R0 + R2: depth-first over hero -> walkable cell, rejecting a cell as soon
+// as it shares a cell, row or column with an earlier hero (that is exactly R1 + injectivity), and testing
+// every complete placement with refValid. Cached per puzzle object (map and heroes must not change).
 export function refCandidates(puzzle) {
-  const out = [];
-  forEachCandidate(puzzle, (safe, placement) => out.push({ safe, placement }));
-  return out;
-}
-
-// Q5: truth value is not constant over Cand.
-export function refInformative(puzzle, st) {
-  let seenTrue = false;
-  let seenFalse = false;
-  for (const { safe, placement } of refCandidates(puzzle)) {
-    if (refEval(puzzle, safe, placement, st)) seenTrue = true;
-    else seenFalse = true;
-    if (seenTrue && seenFalse) return true;
+  if (candidateCache.has(puzzle)) return candidateCache.get(puzzle);
+  const n = puzzle.n;
+  const k = puzzle.heroes.length;
+  const walkable = [];
+  for (let cell = 0; cell < n * n; cell++) if (isWalkable(puzzle, cell)) walkable.push(cell);
+  const result = [];
+  const placement = [];
+  function place(h) {
+    if (h === k) {
+      if (refValid(puzzle, placement)) result.push(placement.slice());
+      return;
+    }
+    for (const cell of walkable) {
+      let clash = false;
+      for (let g = 0; g < h; g++) {
+        if (placement[g] === cell
+          || rowOf(puzzle, placement[g]) === rowOf(puzzle, cell)
+          || colOf(puzzle, placement[g]) === colOf(puzzle, cell)) { clash = true; break; }
+      }
+      if (clash) continue;
+      placement[h] = cell;
+      place(h + 1);
+    }
+    placement.length = h;
   }
-  return false;
+  place(0);
+  candidateCache.set(puzzle, result);
+  return result;
 }
 
-// The spec does not name the key holding the statement id; accept the usual spellings.
-function kindOf(st) {
-  return st.type ?? st.kind ?? st.id ?? st.t;
+// Candidates satisfying every statement of the puzzle.
+export function refSolve(puzzle) {
+  return refCandidates(puzzle).filter((p) => puzzle.statements.every((st) => refEval(puzzle, p, st)));
 }
+
+// Q5: false iff `st` is true in every candidate (no statement applied).
+export function refInformative(puzzle, st) {
+  return !refCandidates(puzzle).every((p) => refEval(puzzle, p, st));
+}
+
