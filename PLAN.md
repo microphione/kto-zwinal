@@ -493,7 +493,7 @@ diagonal thief rule; rewriting tutorial/examples by hand. Excluded: owner decisi
   `ktozwinal-v3`; E2E `e2e-block.mjs` against the live site 33/33 OK, no console errors.
 - [ ] Real-phone test by the owner.
 
-## Stage 10 — Rules v4: map clues, furniture, house and outdoor settings `[x]` (owner request 2026-11-01; deploy pending the owner's go)
+## Stage 10 — Rules v4: map clues, furniture, house and outdoor settings `[x]` (owner request 2026-11-01; deployed 2026-11-02, de57d89)
 
 Owner (2026-11-01, after the phone test of v3): (1) statements about position relative to the safe are useless →
 remove **all** safe statements (directions, safe zone, alarm); (2) „Widziałem X” says nothing → remove `sees`;
@@ -673,3 +673,4 @@ independent until its comparison pass. Excluded: real phone test, deploy (owner'
 - 2026-11-01 — Stage 10 done (rules v4), verified (two flows + comparison, 0 BLOCKER, 2 MAJOR + 5 MINOR fixed); `npm test` 36/36, E2E 36/36. Not committed, not deployed: waiting for the owner's go.
 - 2026-11-02 — Stage 11 (fix stage 10 gaps) 11a–11f done; `npm test` 37/37, E2E 48/48 × (Chrome phone, WebKit, desktop). Next: 11g verification.
 - 2026-11-02 — Stage 11 done, verified (two flows + comparison, 0 BLOCKER/MAJOR, 3 MINOR fixed and re-verified); `npm test` 37/37, E2E 48/48 × 3. Measured ≈ 1.5 h (P50 2 h). Not committed, not deployed: waiting for the owner's go.
+- 2026-11-02 — Owner's go: stages 10 + 11 committed (de57d89) and pushed; Pages build `built` for de57d89, live `sw.js` = `ktozwinal-v4`; E2E `e2e-v4b.mjs` against https://microphione.github.io/kto-zwinal/ 48/48 in Chrome (phone) and WebKit 26.5 (phone), no console errors. Next: owner's phone test.
