@@ -1,56 +1,57 @@
 {
- "version": 3,
+ "version": 4,
  "seed": "misja-2",
  "difficulty": "medium",
  "n": 6,
+ "setting": "willa",
  "cells": [
   [
-   "ground",
-   "bush",
-   "ground",
-   "barrel",
-   "ground",
-   "ground"
+   "floor",
+   "wardrobe",
+   "floor",
+   "floor",
+   "floor",
+   "bed"
   ],
   [
-   "rock",
-   "ground",
-   "ground",
-   "ground",
-   "ground",
-   "barrel"
+   "floor",
+   "bed",
+   "armchair",
+   "plant",
+   "floor",
+   "table"
   ],
   [
-   "ground",
-   "ground",
-   "ground",
-   "ground",
-   "ground",
-   "ground"
+   "floor",
+   "floor",
+   "rug",
+   "floor",
+   "floor",
+   "rug"
   ],
   [
-   "ground",
-   "ground",
-   "rock",
-   "ground",
-   "pad",
-   "ground"
+   "floor",
+   "rug",
+   "floor",
+   "floor",
+   "floor",
+   "floor"
   ],
   [
-   "ground",
-   "ground",
-   "ground",
-   "ground",
-   "ground",
-   "ground"
+   "plant",
+   "floor",
+   "floor",
+   "table",
+   "floor",
+   "floor"
   ],
   [
-   "bush",
-   "bush",
-   "bush",
-   "ground",
-   "barrel",
-   "barrel"
+   "floor",
+   "floor",
+   "floor",
+   "floor",
+   "wardrobe",
+   "floor"
   ]
  ],
  "zones": [
@@ -104,22 +105,18 @@
   ]
  ],
  "zoneNames": [
-  "Kanion",
-  "Plaża",
-  "Ruiny",
-  "Las"
+  "Hol",
+  "Jadalnia",
+  "Sypialnia",
+  "Biblioteka"
+ ],
+ "zoneKinds": [
+  "in",
+  "in",
+  "in",
+  "in"
  ],
  "heroes": [
-  {
-   "name": "Bobo",
-   "gen": "Bobo",
-   "gender": "m"
-  },
-  {
-   "name": "Rufi",
-   "gen": "Rufiego",
-   "gender": "m"
-  },
   {
    "name": "Lumi",
    "gen": "Lumi",
@@ -131,60 +128,61 @@
    "gender": "f"
   },
   {
-   "name": "Zyg",
-   "gen": "Zyga",
+   "name": "Kora",
+   "gen": "Kory",
+   "gender": "f"
+  },
+  {
+   "name": "Bobo",
+   "gen": "Bobo",
+   "gender": "m"
+  },
+  {
+   "name": "Rufi",
+   "gen": "Rufiego",
    "gender": "m"
   }
  ],
  "statements": [
   {
-   "type": "nextTo",
-   "cellType": "barrel",
-   "who": 0
-  },
-  {
-   "type": "nextTo",
-   "cellType": "barrel",
-   "who": 1
-  },
-  {
-   "type": "westOf",
-   "who": 1,
-   "hero": 0
+   "type": "aloneIn",
+   "who": 0,
+   "zone": 0
   },
   {
    "type": "inZone",
-   "zone": 2,
-   "who": 3
+   "zone": 3,
+   "who": 1
   },
   {
-   "type": "notNextTo",
-   "cellType": "rock",
-   "who": 3
+   "type": "nextTo",
+   "cellType": "wardrobe",
+   "who": 2
+  },
+  {
+   "type": "onlyOn",
+   "who": 3,
+   "cellType": "armchair"
   },
   {
    "type": "on",
-   "cellType": "bush",
-   "who": 4
-  },
-  {
-   "type": "eastOfSafe",
+   "cellType": "rug",
    "who": 4
   }
  ],
- "safe": 24,
+ "safe": 22,
  "solution": [
-  17,
-  10,
-  21,
-  2,
-  31
+  25,
+  33,
+  0,
+  8,
+  17
  ],
  "thief": 4,
  "grade": {
-  "level": 2,
-  "steps": 26
+  "level": 1,
+  "steps": 13
  },
  "id": "misja-2",
- "title": "Akcja w bazie"
+ "title": "Nocna wizyta"
 }

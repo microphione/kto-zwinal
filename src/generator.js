@@ -1,12 +1,12 @@
 // Procedural boards and puzzles satisfying RULES.md Q1–Q5 (Q3 via the step solver, src/steps.js).
 import { createRng } from './rng.js';
-import { getBoard, safeOf, OBSTACLE_TYPES } from './board.js';
+import { getBoard, safeOf, isPlain, CELL_TYPES } from './board.js';
 import { trueStatements, isValidPlacement, thiefOf, evaluate } from './statements.js';
 import { solve } from './solver.js';
 import { stepSolve } from './steps.js';
-import { HERO_ROSTER, ZONE_NAMES } from './text.js';
+import { HERO_ROSTER, SETTINGS, ZONES } from './text.js';
 
-export const PUZZLE_VERSION = 3;
+export const PUZZLE_VERSION = 4;
 
 // heroes = n − 1 (RULES.md §2). drones: drone hints the player may send (RULES.md §7, not statements).
 // maxLevel: hardest step-solver technique allowed (3 = one refuted assumption, hard and expert only).
@@ -24,25 +24,22 @@ const SAMPLE_RUNS = 24;
 const SAMPLE_NODES = 20000;
 const PROOF_NODES = 400000;
 
-// Relative preference: qualitative clues over raw coordinates. The negative forms cut few placements,
-// so they get a higher weight to appear at all (the design table lists them as clue kinds).
+// Relative preference: clues about the map (furniture, zones) over hero-relative ones and raw coordinates.
+// The negative forms cut few placements, so they need a fair weight to appear at all.
 const WEIGHT = {
-  inZone: 1, notInZone: 1.2, on: 1.2, nextTo: 1, notNextTo: 1, sees: 1, row: 0.3, col: 0.3,
-  northOf: 0.8, southOf: 0.8, westOf: 0.8, eastOf: 0.8, sameZone: 0.7, otherZone: 1.2,
-  alone: 0.8, zoneCount: 0.6,
-  northOfSafe: 0.8, southOfSafe: 0.8, westOfSafe: 0.8, eastOfSafe: 0.8, sameZoneSafe: 0.9, otherZoneSafe: 1.1,
-  alarm: 0.6,
+  inZone: 1.1, notInZone: 1.5, aloneIn: 1.5, on: 1.4, notOn: 2.5, onlyOn: 1.6, nobodyOn: 1.3,
+  nextTo: 1.2, notNextTo: 1, row: 0.3, col: 0.3,
+  northOf: 0.5, southOf: 0.5, westOf: 0.5, eastOf: 0.5, sameZone: 0.6, otherZone: 0.9,
+  alone: 0.7, zoneCount: 0.5,
 };
 // Zone clues cut few placements each; without this the greedy pick and Q2 would almost never keep them.
 const DIVERSITY = 0.8;
 
-// Clue kinds of the design table; directions count as one kind, so do zone population clues.
+// Clue kinds; directions count as one kind, so do zone population clues.
 export const FAMILY = {
-  inZone: 'zone', notInZone: 'zone', on: 'cell', nextTo: 'next', notNextTo: 'next', sees: 'sees',
-  row: 'line', col: 'line', northOf: 'dir', southOf: 'dir', westOf: 'dir', eastOf: 'dir',
+  inZone: 'zone', notInZone: 'zone', on: 'cell', notOn: 'cell', onlyOn: 'only', aloneIn: 'only', nobodyOn: 'nobody',
+  nextTo: 'next', notNextTo: 'next', row: 'line', col: 'line', northOf: 'dir', southOf: 'dir', westOf: 'dir', eastOf: 'dir',
   sameZone: 'pair', otherZone: 'pair', alone: 'count', zoneCount: 'count',
-  northOfSafe: 'safeDir', southOfSafe: 'safeDir', westOfSafe: 'safeDir', eastOfSafe: 'safeDir',
-  sameZoneSafe: 'safeZone', otherZoneSafe: 'safeZone', alarm: 'alarm',
 };
 const familyCount = (list, type) => list.filter(x => FAMILY[x.type] === FAMILY[type]).length;
 // Each repeat of a kind lowers its score, so one puzzle mixes many clue kinds.
@@ -83,33 +80,55 @@ function growZones(rng, n, count) {
   return zones;
 }
 
+const typesOf = (kind, walk) => Object.keys(CELL_TYPES).filter(t => CELL_TYPES[t].kind === kind && !CELL_TYPES[t].plain && !!CELL_TYPES[t].walk === walk);
+const PALETTE = {
+  in: { plain: 'floor', obstacles: typesOf('in', false), special: typesOf('in', true) },
+  out: { plain: 'grass', obstacles: typesOf('out', false), special: typesOf('out', true) },
+};
+const SPECIAL_SHARE = 0.2;
+const FAVOUR = 0.5;
+
+// Setting, zone names and kinds (RULES.md §6 conventions): a house has at most one outdoor zone, the park only
+// outdoor zones.
+function pickZones(rng, count) {
+  const id = rng.pick(Object.keys(SETTINGS));
+  const { rooms, areas } = SETTINGS[id];
+  const outdoor = rooms.length === 0 ? count : areas.length && rng.next() < 0.5 ? 1 : 0;
+  const names = [...rng.shuffle(rooms).slice(0, count - outdoor), ...rng.shuffle(areas).slice(0, outdoor)];
+  return { setting: id, zoneNames: names, zoneKinds: names.map(name => (rooms.includes(name) ? 'in' : 'out')) };
+}
+
+// A type from `list`, often one the zone favours (bedroom → bed, kitchen → table).
+function pickType(rng, list, favoured) {
+  const liked = list.filter(t => favoured.includes(t));
+  return liked.length && rng.next() < FAVOUR ? rng.pick(liked) : rng.pick(list);
+}
+
 export function generateBoard(rng, cfg) {
   const { n } = cfg;
   for (;;) {
     const zones = growZones(rng, n, cfg.zones);
-    const types = new Array(n * n).fill('ground');
+    const { setting, zoneNames, zoneKinds } = pickZones(rng, cfg.zones);
+    const palette = i => PALETTE[zoneKinds[zones[i]]];
+    const favoured = i => ZONES[zoneNames[zones[i]]].slice(1);
+    const types = Array.from({ length: n * n }, (_, i) => palette(i).plain);
     const cells = rng.shuffle([...Array(n * n).keys()]);
     const obstacles = Math.round(n * n * cfg.obstacles);
-    for (const cell of cells.slice(0, obstacles)) types[cell] = rng.pick(OBSTACLE_TYPES);
+    for (const cell of cells.slice(0, obstacles)) types[cell] = pickType(rng, palette(cell).obstacles, favoured(cell));
     const free = cells.slice(obstacles);
-    for (const cell of free.slice(0, Math.round(free.length * 0.12))) types[cell] = 'bush';
-    for (const cell of free.slice(Math.round(free.length * 0.12), Math.round(free.length * 0.18))) types[cell] = 'pad';
+    for (const cell of free.slice(0, Math.round(free.length * SPECIAL_SHARE))) types[cell] = pickType(rng, palette(cell).special, favoured(cell));
 
     const rows = arr => Array.from({ length: n }, (_, r) => arr.slice(r * n, r * n + n));
-    const puzzle = {
-      n,
-      cells: rows(types),
-      zones: rows(zones),
-      zoneNames: rng.shuffle(ZONE_NAMES).slice(0, cfg.zones),
-    };
+    const puzzle = { n, setting, cells: rows(types), zones: rows(zones), zoneNames, zoneKinds };
     const board = getBoard(puzzle);
-    // Zones keep 3 walkable cells, so the safe on one of them still leaves the zone a place to stand.
-    if (board.zoneCells.every(list => list.filter(cell => board.walk[cell]).length >= 3)) return puzzle;
+    // Zones keep 3 walkable cells, so the safe on one of them still leaves the zone a place to stand, and one
+    // plain cell, where the UI writes the zone name without hiding an object.
+    if (board.zoneCells.every(list => list.filter(cell => board.walk[cell]).length >= 3 && list.some(cell => isPlain(board.type[cell])))) return puzzle;
   }
 }
 
 const PLACE_TRIES = 200;
-// Random N pieces, one per row and column, on walkable cells; one of them is the safe (ground, at least 2
+// Random N pieces, one per row and column, on walkable cells; one of them is the safe (plain, at least 2
 // thief spots) and exactly one hero stands on a thief spot (R0–R2). Returns the hero placement or null.
 export function placeHeroes(rng, puzzle) {
   const board = getBoard(puzzle);
@@ -120,7 +139,7 @@ export function placeHeroes(rng, puzzle) {
     if (!cells.every(cell => board.walk[cell])) continue;
     for (const safe of rng.shuffle(cells)) {
       const spots = board.thiefSpots[safe];
-      if (board.type[safe] !== 'ground' || spots.length < 2) continue;
+      if (!isPlain(board.type[safe]) || spots.length < 2) continue;
       const placement = cells.filter(cell => cell !== safe);
       if (placement.filter(cell => spots.includes(cell)).length === 1) return rng.shuffle(placement);
     }
@@ -128,9 +147,22 @@ export function placeHeroes(rng, puzzle) {
   return null;
 }
 
+// The subject's own type / zone when the statement fixes it.
+const ownType = x => (x.type === 'on' || x.type === 'onlyOn' ? x.cellType : null);
+const ownZone = x => (x.type === 'inZone' || x.type === 'aloneIn' ? x.zone : null);
+// One statement of the same subject implies the other (RULES.md §6 conventions).
+function implies(a, b) {
+  if (ownType(a) && (ownType(b) || b.type === 'notOn')) return true;
+  if (ownZone(a) !== null && (ownZone(b) !== null || b.type === 'notInZone')) return true;
+  return a.type === 'aloneIn' && b.type === 'alone';
+}
+
 function allowed(chosen, st) {
-  if (st.type === 'alarm') return !chosen.some(x => x.type === 'alarm');
-  if (chosen.filter(x => x.who === st.who).length >= MAX_PER_HERO) return false;
+  if (st.type === 'nobodyOn') return !chosen.some(x => x.type === 'nobodyOn' || (x.type === 'notOn' && x.cellType === st.cellType));
+  if (st.type === 'notOn' && chosen.some(x => x.type === 'nobodyOn' && x.cellType === st.cellType)) return false;
+  const own = chosen.filter(x => x.who === st.who);
+  if (own.length >= MAX_PER_HERO) return false;
+  if (own.some(x => implies(x, st) || implies(st, x))) return false;
   if ((st.type === 'sameZone' || st.type === 'otherZone') && chosen.some(x => x.type === st.type && x.who === st.hero && x.hero === st.who)) return false;
   return true;
 }

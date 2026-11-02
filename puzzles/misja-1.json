@@ -1,43 +1,44 @@
 {
- "version": 3,
+ "version": 4,
  "seed": "misja-1",
  "difficulty": "easy",
  "n": 5,
+ "setting": "park",
  "cells": [
   [
-   "ground",
-   "ground",
-   "ground",
-   "ground",
-   "ground"
-  ],
-  [
-   "ground",
-   "ground",
-   "ground",
+   "grass",
+   "pond",
+   "grass",
    "rock",
-   "pad"
+   "pond"
   ],
   [
-   "rock",
-   "ground",
-   "ground",
-   "ground",
-   "ground"
-  ],
-  [
-   "ground",
    "bush",
-   "bush",
-   "ground",
+   "grass",
+   "grass",
+   "grass",
    "bush"
   ],
   [
-   "ground",
-   "ground",
-   "rock",
-   "barrel",
-   "ground"
+   "grass",
+   "grass",
+   "grass",
+   "grass",
+   "bush"
+  ],
+  [
+   "bench",
+   "grass",
+   "grass",
+   "grass",
+   "grass"
+  ],
+  [
+   "grass",
+   "grass",
+   "grass",
+   "grass",
+   "rock"
   ]
  ],
  "zones": [
@@ -78,75 +79,70 @@
   ]
  ],
  "zoneNames": [
-  "Oaza",
-  "Wulkan",
-  "Las"
+  "Polana",
+  "Altana",
+  "Łąka"
+ ],
+ "zoneKinds": [
+  "out",
+  "out",
+  "out"
  ],
  "heroes": [
   {
-   "name": "Zyg",
-   "gen": "Zyga",
+   "name": "Kora",
+   "gen": "Kory",
+   "gender": "f"
+  },
+  {
+   "name": "Bobo",
+   "gen": "Bobo",
    "gender": "m"
-  },
-  {
-   "name": "Tesa",
-   "gen": "Tesy",
-   "gender": "f"
-  },
-  {
-   "name": "Mira",
-   "gen": "Miry",
-   "gender": "f"
   },
   {
    "name": "Lumi",
    "gen": "Lumi",
    "gender": "f"
+  },
+  {
+   "name": "Zyg",
+   "gen": "Zyga",
+   "gender": "m"
   }
  ],
  "statements": [
   {
-   "type": "westOf",
-   "who": 0,
-   "hero": 2
-  },
-  {
-   "type": "nextTo",
-   "cellType": "rock",
+   "type": "inZone",
+   "zone": 0,
    "who": 0
   },
   {
-   "type": "on",
-   "cellType": "bush",
-   "who": 1
+   "type": "eastOf",
+   "who": 0,
+   "hero": 1
   },
   {
    "type": "nextTo",
    "cellType": "rock",
-   "who": 2
+   "who": 1
   },
   {
-   "type": "notInZone",
-   "zone": 1,
-   "who": 2
-  },
-  {
-   "type": "sees",
-   "cellType": "rock",
-   "who": 3
+   "type": "onlyOn",
+   "who": 2,
+   "cellType": "bench"
   }
  ],
- "safe": 13,
+ "safe": 6,
  "solution": [
-  5,
-  19,
-  21,
-  2
+  23,
+  2,
+  15,
+  14
  ],
  "thief": 1,
  "grade": {
   "level": 2,
-  "steps": 16
+  "steps": 10
  },
  "id": "misja-1",
  "title": "Pierwszy skok"

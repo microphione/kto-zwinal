@@ -3,11 +3,11 @@
 // ("trial") is a single assumption refuted by levels 1–2; it is never nested.
 // Variables 0..k−1 are the heroes, variable k is the safe: N pieces, one in every row and every column
 // (R1 with k = N − 1 heroes, RULES.md §2).
-import { getBoard, safeOf } from './board.js';
-import { UNARY, PAIR, SAFE_PAIR, unaryHolds, pairHolds, evaluate, isValidPlacement } from './statements.js';
+import { getBoard, safeOf, isPlain } from './board.js';
+import { UNARY, PAIR, COMPOSITE, unaryParts, unaryHolds, pairHolds, evaluate, isValidPlacement, checkStatements } from './statements.js';
 import { createRng } from './rng.js';
 
-export const LEVEL = { statements: 1, fixed: 1, line: 1, thief: 1, pair: 2, block: 2, subset: 2, zone: 2, trial: 3 };
+export const LEVEL = { statements: 1, composite: 1, fixed: 1, line: 1, thief: 1, pair: 2, block: 2, subset: 2, zone: 2, trial: 3 };
 
 class Contradiction extends Error {
   constructor(reason) {
@@ -17,6 +17,7 @@ class Contradiction extends Error {
 }
 
 function setup(puzzle) {
+  checkStatements(puzzle);
   const board = getBoard(puzzle);
   const k = puzzle.heroes.length;
   const st = puzzle.statements.map((s, sid) => ({ ...s, sid })); // sid: position in puzzle.statements
@@ -27,9 +28,8 @@ function setup(puzzle) {
     S: k,
     n: board.n,
     spots: board.thiefSpots.map(list => new Set(list)),
-    unary: st.filter(s => UNARY.has(s.type) && !SAFE_PAIR[s.type]),
-    bySafe: st.filter(s => SAFE_PAIR[s.type]), // the speaker's cell against the safe's cell
-    alarms: st.filter(s => s.type === 'alarm'),
+    unary: st.filter(s => UNARY.has(s.type)),
+    composite: st.filter(s => COMPOSITE.has(s.type)), // `onlyOn`, `aloneIn`, `nobodyOn`: unary parts per hero
     pairs: st.filter(s => PAIR.has(s.type)),
     zoneStatements: st.filter(s => s.type === 'alone' || s.type === 'zoneCount'),
     alone: new Set(st.filter(s => s.type === 'alone').map(s => s.who)),
@@ -88,23 +88,23 @@ function initialDomains(ctx, facts) {
   const { board } = ctx;
   const dom = HEROES(ctx).map(() => new Set(board.walkCells));
   // R0, and R2 needs at least one thief spot.
-  dom.push(new Set(board.walkCells.filter(s => board.type[s] === 'ground' && ctx.spots[s].size > 0)));
+  dom.push(new Set(board.walkCells.filter(s => isPlain(board.type[s]) && ctx.spots[s].size > 0)));
   for (const { hero, cell } of facts) dom[hero] = new Set([cell]);
   return dom;
 }
 
 function applyStatements(state) {
   const { ctx } = state;
-  const { S } = ctx;
-  if (ctx.alarms.length) {
-    state.apply({ tech: 'statements', hero: S, statements: ctx.alarms.map(s => s.sid) },
-      [{ hero: S, keep: s => ctx.alarms.every(a => ctx.board.zone[s] === a.zone) }], []);
-  }
   for (let h = 0; h < ctx.k; h++) {
     const own = ctx.unary.filter(s => s.who === h);
     if (!own.length) continue;
     state.apply({ tech: 'statements', hero: h, statements: own.map(s => s.sid) },
       [{ hero: h, keep: c => own.every(s => unaryHolds(ctx.board, s, c)) }], []);
+  }
+  // One step per composite statement: it narrows the subject and every other hero at once.
+  for (const s of ctx.composite) {
+    const changes = unaryParts(s, ctx.k).filter(p => p.st).map(p => ({ hero: p.hero, keep: c => unaryHolds(ctx.board, p.st, c) }));
+    state.apply({ tech: 'composite', hero: s.who ?? -1, statement: s.sid }, changes, []);
   }
 }
 
@@ -181,10 +181,7 @@ function thief(state) {
 function pair(state) {
   const { ctx, dom } = state;
   const { board, S } = ctx;
-  const ties = [
-    ...ctx.pairs.map(s => ({ s, a: s.who, b: s.hero, type: s.type })),
-    ...ctx.bySafe.map(s => ({ s, a: s.who, b: S, type: SAFE_PAIR[s.type] })),
-  ];
+  const ties = ctx.pairs.map(s => ({ s, a: s.who, b: s.hero, type: s.type }));
   for (const { s, a, b, type } of ties) {
     const st = { type };
     const keepA = x => [...dom[b]].some(y => apart(ctx, x, y) && pairHolds(board, st, x, y));

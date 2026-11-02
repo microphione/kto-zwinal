@@ -1,9 +1,9 @@
-// Random inputs for property tests (rules v3): boards with heroes = n − 1, arbitrary and rook placements,
-// and statements of every kind, true or false.
+// Random inputs for property tests (rules v4): boards with heroes = n − 1, arbitrary and rook placements,
+// and well-formed statements of every kind (RULES.md §5), true or false.
 import { createRng } from '../src/rng.js';
 import { generateBoard } from '../src/generator.js';
 import { solve } from '../src/solver.js';
-import { getBoard } from '../src/board.js';
+import { getBoard, WALKABLE_TYPES, SPECIAL_TYPES, NON_PLAIN_TYPES } from '../src/board.js';
 import { HERO_ROSTER } from '../src/text.js';
 import { refCandidates, refEval, refValid } from './reference.js';
 
@@ -22,34 +22,33 @@ export const LARGE = [
 ];
 
 const PAIRS = ['northOf', 'southOf', 'westOf', 'eastOf', 'sameZone', 'otherZone'];
-const SAFE = ['northOfSafe', 'southOfSafe', 'westOfSafe', 'eastOfSafe', 'sameZoneSafe', 'otherZoneSafe'];
-const OBSTACLES = ['crate', 'barrel', 'rock'];
 
-// Every v3 statement kind with random (often false) parameters.
+// Every v4 statement kind with random (often false) parameters; always well-formed (the reference rejects the rest).
+// `nobodyOn` has no subject.
 export function randomStatement(rng, puzzle) {
   const k = puzzle.heroes.length;
   const who = rng.int(0, k - 1);
   let hero = rng.int(0, k - 2);
   if (hero >= who) hero++;
   const zone = rng.int(0, puzzle.zoneNames.length - 1);
-  switch (rng.int(0, 10)) {
-    case 0: return { type: rng.pick(['inZone', 'notInZone']), who, zone };
-    case 1: return { type: 'on', who, cellType: rng.pick(['ground', 'bush', 'pad']) };
-    case 2: return { type: rng.pick(['nextTo', 'notNextTo']), who, cellType: rng.pick(OBSTACLES) };
-    case 3: return { type: 'sees', who, cellType: rng.pick(OBSTACLES) };
-    case 4: return { type: rng.pick(['row', 'col']), who, n: rng.int(1, puzzle.n) };
-    case 5:
-    case 6: return { type: rng.pick(PAIRS), who, hero };
-    case 7: return { type: 'alone', who };
-    case 8: return { type: 'zoneCount', who, n: rng.int(2, k) };
-    case 9: return { type: rng.pick(SAFE), who };
-    default: return { type: 'alarm', zone };
+  switch (rng.int(0, 11)) {
+    case 0: return { type: rng.pick(['inZone', 'notInZone', 'aloneIn']), who, zone };
+    case 1: return { type: 'on', who, cellType: rng.pick(WALKABLE_TYPES) };
+    case 2: return { type: rng.pick(['notOn', 'onlyOn']), who, cellType: rng.pick(SPECIAL_TYPES) };
+    case 3: return { type: 'nobodyOn', cellType: rng.pick(SPECIAL_TYPES) };
+    case 4:
+    case 5: return { type: rng.pick(['nextTo', 'notNextTo']), who, cellType: rng.pick(NON_PLAIN_TYPES) };
+    case 6: return { type: rng.pick(['row', 'col']), who, n: rng.int(1, puzzle.n) };
+    case 7:
+    case 8: return { type: rng.pick(PAIRS), who, hero };
+    case 9: return { type: 'alone', who };
+    default: return { type: 'zoneCount', who, n: rng.int(2, k) };
   }
 }
 
 // A board with n − 1 named heroes and no statements. The rng continues for the caller's own draws.
 export function randomBoardPuzzle(seed, sizes = SMALL) {
-  const rng = createRng(`test3|${seed}|${sizes.length}`);
+  const rng = createRng(`test4|${seed}|${sizes.length}`);
   const cfg = sizes[seed % sizes.length];
   const base = generateBoard(rng, cfg);
   const heroes = HERO_ROSTER.slice(0, cfg.n - 1).map(h => ({ ...h }));
@@ -90,18 +89,29 @@ export function refSolveWith(board, statements) {
 // Brute force for boards too big to enumerate every candidate (n ≥ 7 has millions): depth-first over heroes,
 // pruning with the reference predicate on statements whose heroes are all placed, then the full reference check
 // at the leaves. Returns null when more than `budget` nodes or MAX_SPARSE solutions would be needed.
-const PRUNABLE = new Set(['inZone', 'notInZone', 'on', 'nextTo', 'notNextTo', 'sees', 'row', 'col', 'northOf', 'southOf', 'westOf', 'eastOf', 'sameZone', 'otherZone']);
+// Zone-population statements are only checked at the leaves; composite ones are pruned through the per-hero
+// unary statements of RULES.md §5 notes (the leaves still use the statement itself).
+const PRUNABLE = new Set(['inZone', 'notInZone', 'on', 'notOn', 'nextTo', 'notNextTo', 'row', 'col', 'northOf', 'southOf', 'westOf', 'eastOf', 'sameZone', 'otherZone']);
 export const MAX_SPARSE = 5000;
 export function refSolveSparse(board, statements, budget = 3e6) {
   const { n } = board;
   const k = board.heroes.length;
   const walkable = [];
-  for (let cell = 0; cell < n * n; cell++) if (['ground', 'bush', 'pad'].includes(board.cells[Math.floor(cell / n)][cell % n])) walkable.push(cell);
+  for (let cell = 0; cell < n * n; cell++) if (WALKABLE_TYPES.includes(board.cells[Math.floor(cell / n)][cell % n])) walkable.push(cell);
   const byLast = Array.from({ length: k }, () => []);
+  const prunable = [];
   for (const st of statements) {
-    if (!PRUNABLE.has(st.type)) continue;
-    byLast[Math.max(st.who, st.hero ?? 0)].push(st);
+    if (PRUNABLE.has(st.type)) prunable.push(st);
+    else if (st.type === 'onlyOn' || st.type === 'aloneIn' || st.type === 'nobodyOn') {
+      for (let hero = 0; hero < k; hero++) {
+        const own = hero === st.who;
+        if (st.type === 'onlyOn') prunable.push({ type: own ? 'on' : 'notOn', who: hero, cellType: st.cellType });
+        else if (st.type === 'aloneIn') prunable.push({ type: own ? 'inZone' : 'notInZone', who: hero, zone: st.zone });
+        else prunable.push({ type: 'notOn', who: hero, cellType: st.cellType });
+      }
+    }
   }
+  for (const st of prunable) byLast[Math.max(st.who, st.hero ?? 0)].push(st);
   const placement = new Array(k).fill(undefined);
   const out = [];
   let nodes = 0;

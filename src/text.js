@@ -10,41 +10,87 @@ export const HERO_ROSTER = [
   { name: 'Lumi', gen: 'Lumi', gender: 'f' },
 ];
 
-export const ZONE_NAMES = ['Kanion', 'Oaza', 'Las', 'Ruiny', 'Plaża', 'Kopalnia', 'Baza', 'Wulkan'];
+// Settings of a case (RULES.md §1): zone catalogue with the prepositional phrase of each zone, the items a
+// zone favours (generator bias, not a rule) and the zone noun of the population wordings.
+const ROOM = {
+  Salon: ['w salonie', 'armchair', 'rug'], Kuchnia: ['w kuchni', 'table'], Sypialnia: ['w sypialni', 'bed', 'wardrobe'],
+  Łazienka: ['w łazience', 'plant'], Weranda: ['na werandzie', 'armchair', 'plant'], Strych: ['na strychu', 'wardrobe'],
+  Hol: ['w holu', 'plant', 'rug'], Jadalnia: ['w jadalni', 'table'], Biblioteka: ['w bibliotece', 'armchair', 'wardrobe'],
+  Gabinet: ['w gabinecie', 'table', 'armchair'], Izba: ['w izbie', 'table', 'rug'], Spiżarnia: ['w spiżarni', 'wardrobe'],
+  Sień: ['w sieni', 'rug'], Przedpokój: ['w przedpokoju', 'wardrobe', 'rug'], 'Pokój dziecięcy': ['w pokoju dziecięcym', 'bed', 'rug'],
+  Pracownia: ['w pracowni', 'table'],
+};
+const AREA = {
+  Ogród: ['w ogrodzie', 'bush', 'bench'], Pomost: ['na pomoście', 'pond', 'bench'], Taras: ['na tarasie', 'bench'],
+  Las: ['w lesie', 'tree', 'bush'], Polana: ['na polanie', 'bush'], Sad: ['w sadzie', 'tree'], Łąka: ['na łące', 'bush'],
+  'Plac zabaw': ['na placu zabaw', 'bench'], Altana: ['w altanie', 'bench'], 'Ogród różany': ['w ogrodzie różanym', 'bush'],
+  Staw: ['nad stawem', 'pond'],
+};
+const HOUSE_WORDS = { noun: 'pomieszczeniu', own: 'w swoim pomieszczeniu', ours: 'W moim pomieszczeniu', same: 'w tym samym pomieszczeniu' };
+// A house with a garden (terrace, forest…): a room word would not fit someone standing outdoors.
+const ESTATE_WORDS = { noun: 'części posesji', own: 'w swojej części posesji', ours: 'W mojej części posesji', same: 'w tej samej części posesji' };
+export const SETTINGS = {
+  domek: { title: 'Domek letniskowy', rooms: ['Salon', 'Kuchnia', 'Sypialnia', 'Łazienka', 'Weranda', 'Strych'], areas: ['Ogród', 'Pomost'] },
+  willa: { title: 'Willa', rooms: ['Hol', 'Salon', 'Jadalnia', 'Biblioteka', 'Gabinet', 'Sypialnia', 'Kuchnia'], areas: ['Taras', 'Ogród'] },
+  chatka: { title: 'Leśna chatka', rooms: ['Izba', 'Kuchnia', 'Sypialnia', 'Spiżarnia', 'Strych', 'Sień'], areas: ['Las', 'Polana'] },
+  kamienica: { title: 'Mieszkanie w kamienicy', rooms: ['Przedpokój', 'Salon', 'Kuchnia', 'Sypialnia', 'Łazienka', 'Gabinet', 'Pokój dziecięcy', 'Pracownia'], areas: [] },
+  park: {
+    title: 'Park miejski', rooms: [], areas: ['Las', 'Polana', 'Sad', 'Łąka', 'Plac zabaw', 'Altana', 'Ogród różany', 'Staw'],
+    words: { noun: 'części parku', own: 'w swojej części parku', ours: 'W mojej części parku', same: 'w tej samej części parku' },
+  },
+};
+// Zone name → [phrase, ...favoured items].
+export const ZONES = { ...ROOM, ...AREA };
+const zonePhrase = (puzzle, z) => ZONES[puzzle.zoneNames[z]][0];
+export const areaWords = puzzle => SETTINGS[puzzle.setting]?.words ?? (puzzle.zoneKinds.includes('out') ? ESTATE_WORDS : HOUSE_WORDS);
 
-const ON = { ground: 'na gołej ziemi', bush: 'w krzakach', pad: 'na wyrzutni' };
-const GENITIVE = { crate: 'skrzyni', barrel: 'beczki', rock: 'skały' };
-const ACCUSATIVE = { crate: 'skrzynię', barrel: 'beczkę', rock: 'skałę' };
+// Wording per cell type (RULES.md §5): verb (1st person m / f, 3rd person m), phrase after it, genitive after „obok”.
+const STAND = ['Stałem', 'Stałam', 'stał'], LIE = ['Leżałem', 'Leżałam', 'leżał'], SIT = ['Siedziałem', 'Siedziałam', 'siedział'];
+export const TYPE_TEXT = {
+  floor: { verb: STAND, on: 'na gołej podłodze', name: 'Podłoga' },
+  grass: { verb: STAND, on: 'na trawie', name: 'Trawa' },
+  bed: { verb: LIE, on: 'na łóżku', gen: 'łóżka', name: 'Łóżko' },
+  armchair: { verb: SIT, on: 'na fotelu', gen: 'fotela', name: 'Fotel' },
+  rug: { verb: STAND, on: 'na dywanie', gen: 'dywanu', name: 'Dywan' },
+  bush: { verb: STAND, on: 'w krzakach', gen: 'krzaków', name: 'Krzaki' },
+  bench: { verb: SIT, on: 'na ławce', gen: 'ławki', name: 'Ławka' },
+  table: { gen: 'stołu', name: 'Stół' },
+  wardrobe: { gen: 'szafy', name: 'Szafa' },
+  plant: { gen: 'kwiatka', name: 'Kwiatek' },
+  tree: { gen: 'drzewa', name: 'Drzewo' },
+  rock: { gen: 'skały', name: 'Skała' },
+  pond: { gen: 'stawu', name: 'Staw' },
+};
 const DIRECTION = { northOf: 'na północ', southOf: 'na południe', westOf: 'na zachód', eastOf: 'na wschód' };
+const lower = w => w[0].toLowerCase() + w.slice(1);
 
 export function statementText(puzzle, st) {
-  if (st.type === 'alarm') return `Alarm: sejf stał w strefie ${puzzle.zoneNames[st.zone]}.`;
+  const tt = TYPE_TEXT[st.cellType];
+  if (st.type === 'nobodyOn') return `Nikt nie ${tt.verb[2]} ${tt.on}.`;
   const f = puzzle.heroes[st.who].gender === 'f';
   const g = (m, fem) => (f ? fem : m);
+  const verb = tt?.verb && g(tt.verb[0], tt.verb[1]);
   const other = st.hero !== undefined ? puzzle.heroes[st.hero] : null;
+  const words = areaWords(puzzle);
   switch (st.type) {
-    case 'inZone': return `${g('Byłem', 'Byłam')} w strefie ${puzzle.zoneNames[st.zone]}.`;
-    case 'notInZone': return `Nie ${g('byłem', 'byłam')} w strefie ${puzzle.zoneNames[st.zone]}.`;
-    case 'on': return `${g('Stałem', 'Stałam')} ${ON[st.cellType]}.`;
-    case 'nextTo': return `${g('Stałem', 'Stałam')} obok ${GENITIVE[st.cellType]}.`;
-    case 'notNextTo': return `Nie ${g('stałem', 'stałam')} obok ${GENITIVE[st.cellType]}.`;
-    case 'sees': return `${g('Widziałem', 'Widziałam')} ${ACCUSATIVE[st.cellType]}.`;
+    case 'inZone': return `${g('Byłem', 'Byłam')} ${zonePhrase(puzzle, st.zone)}.`;
+    case 'notInZone': return `Nie ${g('byłem', 'byłam')} ${zonePhrase(puzzle, st.zone)}.`;
+    case 'aloneIn': return `${g('Jako jedyny byłem', 'Jako jedyna byłam')} ${zonePhrase(puzzle, st.zone)}.`;
+    case 'on': return `${verb} ${tt.on}.`;
+    case 'notOn': return `Nie ${lower(verb)} ${tt.on}.`;
+    case 'onlyOn': return `${g('Jako jedyny', 'Jako jedyna')} ${lower(verb)} ${tt.on}.`;
+    case 'nextTo': return `${g('Byłem', 'Byłam')} obok ${tt.gen}.`;
+    case 'notNextTo': return `Nie ${g('byłem', 'byłam')} obok ${tt.gen}.`;
     case 'row': return `${g('Byłem', 'Byłam')} w ${st.n}. rzędzie.`;
     case 'col': return `${g('Byłem', 'Byłam')} w ${st.n}. kolumnie.`;
     case 'northOf':
     case 'southOf':
     case 'westOf':
-    case 'eastOf': return `${g('Stałem', 'Stałam')} gdzieś ${DIRECTION[st.type]} od ${other.gen}.`;
-    case 'alone': return g('Byłem sam w swojej strefie.', 'Byłam sama w swojej strefie.');
-    case 'zoneCount': return `W mojej strefie było nas ${st.n}.`;
-    case 'sameZone': return `${g('Byłem', 'Byłam')} w tej samej strefie co ${other.name}.`;
-    case 'otherZone': return `Nie ${g('byłem', 'byłam')} w tej samej strefie co ${other.name}.`;
-    case 'northOfSafe':
-    case 'southOfSafe':
-    case 'westOfSafe':
-    case 'eastOfSafe': return `${g('Stałem', 'Stałam')} gdzieś ${DIRECTION[st.type.slice(0, -4)]} od sejfu.`;
-    case 'sameZoneSafe': return `${g('Byłem', 'Byłam')} w strefie, w której stał sejf.`;
-    case 'otherZoneSafe': return `Nie ${g('byłem', 'byłam')} w strefie, w której stał sejf.`;
+    case 'eastOf': return `${g('Byłem', 'Byłam')} gdzieś ${DIRECTION[st.type]} od ${other.gen}.`;
+    case 'alone': return `${g('Byłem sam', 'Byłam sama')} ${words.own}.`;
+    case 'zoneCount': return `${words.ours} było nas ${st.n}.`;
+    case 'sameZone': return `${g('Byłem', 'Byłam')} ${words.same} co ${other.name}.`;
+    case 'otherZone': return `Nie ${g('byłem', 'byłam')} ${words.same} co ${other.name}.`;
   }
   throw new Error(`unknown statement: ${st.type}`);
 }
@@ -103,7 +149,7 @@ function contradictionText(puzzle, reason, assumed) {
     case 'rules': return 'ktoś stałby w jednej linii z kimś';
     case 'statement': {
       const st = puzzle.statements[reason.statement];
-      if (st.type === 'alarm') return 'alarm by się nie zgadzał';
+      if (st.who === undefined) return `zeznanie „${statementText(puzzle, st)}” byłoby fałszywe`;
       return `zeznanie ${puzzle.heroes[st.who].gen} byłoby fałszywe`;
     }
   }
@@ -126,8 +172,11 @@ export function stepText(puzzle, step) {
     case 'statements': {
       const { left } = step.effects[0];
       const options = left.length <= 4 ? `${left.length === 1 ? 'możliwe pole' : 'możliwe pola'}: ${cellList(puzzle, left)}` : leftCount(left.length);
-      return isSafe(puzzle, h) ? `Alarm → sejf: ${options}.` : `Zeznania ${hero(h).gen} → ${options}.`;
+      return `Zeznania ${hero(h).gen} → ${options}.`;
     }
+    case 'composite':
+      why = quote(step.statement);
+      break;
     case 'fixed': {
       if (isSafe(puzzle, h)) {
         why = `Sejf stał na polu ${cellName(puzzle, step.cell)}, więc w jego rzędzie i kolumnie nikt nie stał`;
@@ -135,8 +184,9 @@ export function stepText(puzzle, step) {
       }
       const his = isFemale(puzzle, h) ? 'jej' : 'jego';
       why = `${hero(h).name} stoi na polu ${cellName(puzzle, step.cell)}, więc w ${his} rzędzie i kolumnie nie stoi nikt inny ani sejf`;
-      if (step.alone) why += `, a w ${his} strefie nikt inny`;
-      if (step.aloneOthers.length) why += ` (a kto był sam w swojej strefie, nie stoi w ${his} strefie)`;
+      const words = areaWords(puzzle);
+      if (step.alone) why += `, a w ${his} ${words.noun} nikt inny`;
+      if (step.aloneOthers.length) why += ` (a kto był sam ${words.own}, nie stoi w ${his} ${words.noun})`;
       break;
     }
     case 'line':
@@ -146,13 +196,13 @@ export function stepText(puzzle, step) {
       why = step.kind === 'only'
         ? `Tylko ${hero(h).name} może stać po skosie przy sejfie, więc to ${isFemale(puzzle, h) ? 'ona' : 'on'} jest złodziejem`
         : step.kind === 'sure' ? `${hero(h).name} na pewno stoi po skosie przy sejfie, więc nikt inny tam nie stoi`
-          : 'Po skosie przy sejfie, w jego strefie, stała dokładnie jedna osoba (złodziej); gdyby sejf stał na tych polach, nie byłoby tam nikogo albo byłyby dwie osoby, albo ktoś nie miałby gdzie stanąć';
+          : `Po skosie przy sejfie, w jego ${areaWords(puzzle).noun}, stała dokładnie jedna osoba (złodziej); gdyby sejf stał na tych polach, nie byłoby tam nikogo albo byłyby dwie osoby, albo ktoś nie miałby gdzie stanąć`;
       break;
     case 'pair':
       why = quote(step.statement);
       break;
     case 'zone':
-      why = quote(step.statement) + (step.kind === 'subject' ? '' : ` (strefa ${puzzle.zoneNames[step.zone]})`);
+      why = quote(step.statement) + (step.kind === 'subject' ? '' : ` (${zonePhrase(puzzle, step.zone)})`);
       break;
     case 'block':
       why = `Z tych pól ${pieceName(puzzle, h)} ${isFemale(puzzle, h) ? 'zajęłaby' : 'zająłby'} rząd albo kolumnę każdego możliwego miejsca ${pieceGen(puzzle, step.other)}`;

@@ -1,63 +1,68 @@
 {
- "version": 3,
+ "version": 4,
  "seed": "samouczek",
  "difficulty": "easy",
  "n": 4,
+ "setting": "domek",
  "cells": [
   [
-   "rock",
-   "ground",
-   "ground",
-   "ground"
+   "bed",
+   "floor",
+   "floor",
+   "wardrobe"
   ],
   [
-   "ground",
-   "ground",
-   "ground",
-   "rock"
+   "floor",
+   "plant",
+   "armchair",
+   "floor"
   ],
   [
-   "ground",
-   "bush",
-   "ground",
-   "ground"
+   "floor",
+   "rug",
+   "floor",
+   "floor"
   ],
   [
-   "ground",
-   "ground",
-   "bush",
-   "pad"
+   "table",
+   "floor",
+   "floor",
+   "armchair"
   ]
  ],
  "zones": [
   [
    0,
    0,
-   0,
-   0
+   1,
+   1
   ],
   [
+   0,
+   0,
    1,
-   0,
-   0,
-   0
+   1
   ],
   [
-   1,
+   0,
    1,
    1,
    1
   ],
   [
-   1,
+   0,
    1,
    1,
    1
   ]
  ],
  "zoneNames": [
-  "Ruiny",
-  "Baza"
+  "Sypialnia",
+  "Salon"
+ ],
+ "zoneKinds": [
+  "in",
+  "in"
  ],
  "heroes": [
   {
@@ -78,31 +83,25 @@
  ],
  "statements": [
   {
+   "type": "onlyOn",
+   "cellType": "armchair",
+   "who": 1
+  },
+  {
    "type": "on",
-   "cellType": "pad",
-   "who": 0
-  },
-  {
-   "type": "southOf",
-   "who": 2,
-   "hero": 1
-  },
-  {
-   "type": "northOfSafe",
+   "cellType": "bed",
    "who": 2
   }
  ],
- "safe": 10,
+ "safe": 11,
  "solution": [
-  15,
-  1,
-  4
+  13,
+  6,
+  0
  ],
- "thief": 0,
+ "thief": 1,
  "grade": {
   "level": 2,
-  "steps": 10
- },
- "id": "samouczek",
- "title": "Samouczek"
+  "steps": 9
+ }
 }

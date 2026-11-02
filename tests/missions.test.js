@@ -12,7 +12,7 @@ const load = id => JSON.parse(readFileSync(new URL(`../puzzles/${id}.json`, impo
 for (const m of MISSIONS) {
   test(`mission ${m.id}: valid, unique, minimal`, () => {
     const p = load(m.id);
-    assert.equal(p.version, 3);
+    assert.equal(p.version, 4);
     assert.equal(p.difficulty, m.difficulty);
     assert.ok(refValid(p, p.solution));
     assert.equal(safeOf(getBoard(p), p.solution), p.safe);
@@ -34,8 +34,8 @@ test('tutorial: equals example 1, unique (reference), solved by the step solver 
   const { example1 } = await import('./fixtures/examples.js');
   const { stepSolve } = await import('../src/steps.js');
   const p = load('samouczek');
-  for (const f of ['version', 'n', 'cells', 'zones', 'zoneNames', 'statements', 'safe', 'solution', 'thief']) assert.deepEqual(p[f], example1[f], f);
-  assert.deepEqual(p.heroes.map(h => [h.name, h.gender]), example1.heroes.map(h => [h.name, h.gender]));
+  for (const f of ['version', 'n', 'setting', 'cells', 'zones', 'zoneNames', 'zoneKinds', 'statements', 'safe', 'solution', 'thief']) assert.deepEqual(p[f], example1[f], f);
+  assert.deepEqual(p.heroes, example1.heroes);
   assert.deepEqual(refSolve(p), [p.solution]);
   const r = stepSolve(p, { maxLevel: 2 });
   assert.deepEqual(r.placement, p.solution);

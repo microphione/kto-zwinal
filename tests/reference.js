@@ -1,18 +1,28 @@
-// Independent brute-force reference for RULES.md v3 (rows and columns, safe on the last free cell).
+// Independent brute-force reference for RULES.md v4 (map clues, furniture, houses and outdoor settings).
 // Shares no code with src/. Clarity over speed: every predicate is a literal reading of the spec.
 // Cell index = r * n + c (0-based); RULES rows/columns (`row`/`col` parameters) are 1-based.
 
 
+// §1 table: the catalogue of cell types with their walkable / plain flags.
+const WALKABLE_TYPES = ['floor', 'bed', 'armchair', 'rug', 'grass', 'bush', 'bench'];
+const OBSTACLE_TYPES = ['table', 'wardrobe', 'plant', 'tree', 'rock', 'pond'];
+const PLAIN_TYPES = ['floor', 'grass'];
+const ALL_TYPES = [...WALKABLE_TYPES, ...OBSTACLE_TYPES];
+const SPECIAL_TYPES = WALKABLE_TYPES.filter((t) => !PLAIN_TYPES.includes(t)); // walkable and not plain
+const NON_PLAIN_TYPES = ALL_TYPES.filter((t) => !PLAIN_TYPES.includes(t)); // obstacles + special
+
 function rowOf(puzzle, cell) { return Math.floor(cell / puzzle.n); }
 function colOf(puzzle, cell) { return cell % puzzle.n; }
-function typeOf(puzzle, cell) { return puzzle.cells[rowOf(puzzle, cell)][colOf(puzzle, cell)]; }
-function zoneOf(puzzle, cell) { return puzzle.zones[rowOf(puzzle, cell)][colOf(puzzle, cell)]; }
-function isWalkable(puzzle, cell) {
-  const t = typeOf(puzzle, cell);
-  return t === 'ground' || t === 'bush' || t === 'pad';
+function typeOf(puzzle, cell) {
+  const t = puzzle.cells[rowOf(puzzle, cell)][colOf(puzzle, cell)];
+  if (!ALL_TYPES.includes(t)) throw new Error(`unknown cell type ${t}`);
+  return t;
 }
+function zoneOf(puzzle, cell) { return puzzle.zones[rowOf(puzzle, cell)][colOf(puzzle, cell)]; }
+function isWalkable(puzzle, cell) { return WALKABLE_TYPES.includes(typeOf(puzzle, cell)); }
+function isPlain(puzzle, cell) { return PLAIN_TYPES.includes(typeOf(puzzle, cell)); }
 
-// Orthogonally adjacent cells in the same zone (§1).
+// Orthogonally adjacent cells in the same zone (§1; obstacle cells included).
 function neighbours(puzzle, cell) {
   const r = rowOf(puzzle, cell), c = colOf(puzzle, cell);
   const out = [];
@@ -84,7 +94,7 @@ export function refValid(puzzle, placement) {
   }
   const safe = refSafe(puzzle, placement);
   if (safe === -1) return false;
-  if (typeOf(puzzle, safe) !== 'ground') return false; // R0
+  if (!isPlain(puzzle, safe)) return false; // R0: the safe stands on floor or grass
   if (heroesOnSpots(puzzle, placement, safe).length !== 1) return false; // R2
   return true;
 }
@@ -100,29 +110,65 @@ function zoneHeroes(puzzle, placement, hero) {
   return placement.filter((cell) => zoneOf(puzzle, cell) === z).length;
 }
 
-// §5: truth of one statement in a placement (assumes a valid placement).
+// §5: a hero parameter (subject or referenced hero) must be a hero of the puzzle.
+function checkHero(puzzle, h, what) {
+  if (!Number.isInteger(h) || h < 0 || h >= puzzle.heroes.length) throw new Error(`ill-formed statement: bad ${what} ${h}`);
+}
+
+// §5: a statement whose parameter is outside the domain of its row is ill-formed -> throw.
+function checkWellFormed(puzzle, st) {
+  const n = puzzle.n;
+  const k = puzzle.heroes.length;
+  const needZone = () => {
+    if (!Number.isInteger(st.zone) || st.zone < 0 || st.zone >= puzzle.zoneNames.length) {
+      throw new Error(`ill-formed statement: bad zone ${st.zone} in ${st.type}`);
+    }
+  };
+  const needType = (domain, label) => {
+    if (!domain.includes(st.cellType)) throw new Error(`ill-formed statement: ${st.type} ${st.cellType} is not a ${label} type`);
+  };
+  const needRange = (lo, hi) => {
+    if (!Number.isInteger(st.n) || st.n < lo || st.n > hi) throw new Error(`ill-formed statement: ${st.type} n=${st.n} outside ${lo}..${hi}`);
+  };
+  const needOtherHero = () => {
+    checkHero(puzzle, st.hero, 'hero');
+    if (st.hero === st.who) throw new Error(`ill-formed statement: ${st.type} names its own subject`);
+  };
+  if (st.type !== 'nobodyOn') checkHero(puzzle, st.who, 'subject');
+  switch (st.type) {
+    case 'inZone': case 'notInZone': case 'aloneIn': needZone(); break;
+    case 'on': needType(WALKABLE_TYPES, 'walkable'); break;
+    case 'notOn': case 'onlyOn': case 'nobodyOn': needType(SPECIAL_TYPES, 'special'); break;
+    case 'nextTo': case 'notNextTo': needType(NON_PLAIN_TYPES, 'non-plain'); break;
+    case 'row': case 'col': needRange(1, n); break;
+    case 'northOf': case 'southOf': case 'westOf': case 'eastOf': case 'sameZone': case 'otherZone': needOtherHero(); break;
+    case 'alone': break;
+    case 'zoneCount': needRange(2, k); break;
+    default: throw new Error(`unknown statement type ${st.type}`);
+  }
+}
+
+// §5: truth of one statement in a placement (assumes a valid placement). Throws on an ill-formed statement.
 export function refEval(puzzle, placement, st) {
-  if (st.type === 'alarm') {
-    return zoneOf(puzzle, refSafe(puzzle, placement)) === st.zone;
+  checkWellFormed(puzzle, st);
+  if (st.type === 'nobodyOn') {
+    // no hero stands on any cell of type t
+    return placement.every((cell) => typeOf(puzzle, cell) !== st.cellType);
   }
   const s = placement[st.who];
   const sr = rowOf(puzzle, s) + 1; // 1-based as in RULES
   const sc = colOf(puzzle, s) + 1;
   const h = st.hero === undefined ? undefined : placement[st.hero];
-  const safe = refSafe(puzzle, placement);
+  const others = placement.filter((_, i) => i !== st.who); // others(S): cells of every hero except S
   switch (st.type) {
     case 'inZone': return zoneOf(puzzle, s) === st.zone;
     case 'notInZone': return zoneOf(puzzle, s) !== st.zone;
+    case 'aloneIn': return zoneOf(puzzle, s) === st.zone && !others.some((x) => zoneOf(puzzle, x) === st.zone);
     case 'on': return typeOf(puzzle, s) === st.cellType;
+    case 'notOn': return typeOf(puzzle, s) !== st.cellType;
+    case 'onlyOn': return typeOf(puzzle, s) === st.cellType && !others.some((x) => typeOf(puzzle, x) === st.cellType);
     case 'nextTo': return neighbours(puzzle, s).some((x) => typeOf(puzzle, x) === st.cellType);
     case 'notNextTo': return !neighbours(puzzle, s).some((x) => typeOf(puzzle, x) === st.cellType);
-    case 'sees': {
-      for (let cell = 0; cell < puzzle.n * puzzle.n; cell++) {
-        if (typeOf(puzzle, cell) !== st.cellType) continue;
-        if (rowOf(puzzle, cell) + 1 === sr || colOf(puzzle, cell) + 1 === sc) return true;
-      }
-      return false;
-    }
     case 'row': return sr === st.n;
     case 'col': return sc === st.n;
     case 'northOf': return sr < rowOf(puzzle, h) + 1;
@@ -133,12 +179,6 @@ export function refEval(puzzle, placement, st) {
     case 'zoneCount': return zoneHeroes(puzzle, placement, st.who) === st.n;
     case 'sameZone': return zoneOf(puzzle, s) === zoneOf(puzzle, h);
     case 'otherZone': return zoneOf(puzzle, s) !== zoneOf(puzzle, h);
-    case 'northOfSafe': return sr < rowOf(puzzle, safe) + 1;
-    case 'southOfSafe': return sr > rowOf(puzzle, safe) + 1;
-    case 'westOfSafe': return sc < colOf(puzzle, safe) + 1;
-    case 'eastOfSafe': return sc > colOf(puzzle, safe) + 1;
-    case 'sameZoneSafe': return zoneOf(puzzle, s) === zoneOf(puzzle, safe);
-    case 'otherZoneSafe': return zoneOf(puzzle, s) !== zoneOf(puzzle, safe);
     default: throw new Error(`unknown statement type ${st.type}`);
   }
 }
@@ -184,8 +224,8 @@ export function refSolve(puzzle) {
   return refCandidates(puzzle).filter((p) => puzzle.statements.every((st) => refEval(puzzle, p, st)));
 }
 
-// Q5: false iff `st` is true in every candidate (no statement applied).
+// Q5: false iff `st` (with its own subject and parameters, `nobodyOn` included) is true in every candidate
+// (no statement applied).
 export function refInformative(puzzle, st) {
   return !refCandidates(puzzle).every((p) => refEval(puzzle, p, st));
 }
-

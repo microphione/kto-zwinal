@@ -493,6 +493,128 @@ diagonal thief rule; rewriting tutorial/examples by hand. Excluded: owner decisi
   `ktozwinal-v3`; E2E `e2e-block.mjs` against the live site 33/33 OK, no console errors.
 - [ ] Real-phone test by the owner.
 
+## Stage 10 — Rules v4: map clues, furniture, house and outdoor settings `[x]` (owner request 2026-11-01; deploy pending the owner's go)
+
+Owner (2026-11-01, after the phone test of v3): (1) statements about position relative to the safe are useless →
+remove **all** safe statements (directions, safe zone, alarm); (2) „Widziałem X” says nothing → remove `sees`;
+use the map and its elements more often, e.g. „jako jedyny siedzę na fotelu”, „jako jedyny jestem w lesie”;
+(3) new objects: bed („leżałem na łóżku”, „stałem obok łóżka”), armchair („siedziałem na fotelu”, „jako jedyny
+siedziałem na fotelu”, „nikt nie siedział na fotelu”); (4) setting → building interiors, each case a different kind
+of house, sometimes outdoors; basic objects for both sceneries. Hero-relative statements stay (owner: "use the map
+more often", not "remove them"). Guardrail update: interiors with furniture allowed by owner decision; still
+original — diagonal thief, hidden safe, own cartoon art, no "same room" thief rule, no polaroid look.
+
+Design v4 (normative text → `RULES.md` v4 in 10a):
+- **Settings** (`puzzle.setting`): indoor houses — Domek letniskowy, Willa, Leśna chatka, Mieszkanie w kamienicy —
+  (at most one outdoor zone, e.g. Ogród/Taras/Las) and outdoor — Park. Each zone has a kind `in`/`out`
+  (`puzzle.zoneKinds`) and a Polish locative for texts („w kuchni”, „na strychu”, „w lesie”).
+- **Cell types**: indoor `floor` (plain), `bed`, `armchair`, `rug` walkable; `table`, `wardrobe`, `plant`
+  obstacles. Outdoor `grass` (plain), `bush`, `bench` walkable; `tree`, `rock`, `pond` obstacles. `ground`,
+  `pad`, `crate`, `barrel` retired. R0: the safe stands on a plain cell (`floor`/`grass`).
+- **Statements removed**: `sees`, `northOfSafe`…`eastOfSafe`, `sameZoneSafe`, `otherZoneSafe`, `alarm`.
+- **Statements kept**: `inZone`, `notInZone`, `on`, `nextTo`/`notNextTo` (now any non-plain type, walkable ones
+  too: „obok łóżka”), `row`, `col`, hero directions, `sameZone`/`otherZone`, `alone`, `zoneCount`.
+- **Statements added**: `notOn t` („Nie leżałem na łóżku”), `onlyOn t` (S on `t`, no other hero on `t`: „Jako
+  jedyna siedziałam na fotelu”), `aloneIn z` (S in zone `z`, no other hero there: „Jako jedyny byłem w lesie”),
+  global `nobodyOn t` (no hero on `t`: „Nikt nie siedział na fotelu”), `t` = walkable non-plain types.
+  All three compile to unary restrictions (subject / every other hero), so solver and step solver stay level 1.
+- Verbs per type: lie on a bed, sit on an armchair/bench, stand elsewhere („w krzakach”, „na dywanie”).
+- Generator: map clues weighted up (`on`, `notOn`, `onlyOn`, `aloneIn`, `nobodyOn`, `nextTo`, zones), hero
+  directions down; light per-room item bias (bedroom → bed, living room → armchair/rug, kitchen → table).
+- Contract v4: `version: 4`, `setting`, `zoneKinds`; storage `ktozwinal4:`; SW cache `ktozwinal-v4`; tutorial,
+  missions and RULES examples rebuilt. Drone hint unchanged.
+
+| | P50 | P80 |
+|---|---|---|
+| Calendar time (critical path 10a → 10b → 10c → 10d → 10e → 10f) | 7 h | 11 h |
+| Agent effort (incl. analysis, reference and verification agents) | 10 h | 15 h |
+
+P80 risks: generator yield on new tile palettes (zones of ≥ 3 walkable cells, safe with ≥ 2 thief spots on plain);
+Polish wording per type/zone (locatives, verbs, gender); art for 12 new tiles readable at 8×8 on a phone.
+Excluded: owner decisions, phone test, deploy (only on the owner's go).
+
+- [x] **10-0 Impact analysis** — twice, sequentially (Workflow `v4-impact-analysis`, 2 `sonnet` analysts; B confirmed
+  A, fixed line numbers, added 14 couplings: subject-less statements, every `'ground'` check, `UNARY` meaning,
+  zone locatives, generator yield/plain-cell bound, `allowed()` per-hero cap vs globals, SHELL, fixtures).
+- [x] **10a Spec** — `RULES.md` v4 (main session); ambiguity review by 1 `sonnet` worker: 0 HIGH, 4 MEDIUM, 10 LOW.
+  Applied: ill-formed statements rejected, §9 data contract, wording table per type, zone phrases verbatim,
+  plain/neighbour definitions, convention „no nextTo t while standing on t”, „Byłem gdzieś na północ”.
+  Kept the owner's wording „Nikt nie siedział na fotelu” (a type covers every cell, stated in §5); drone
+  unchanged (UI hint, owner decision of stage 9).
+  Sync point 10b: engine (main) and reference (worker) in parallel, compared on random boards before 10c.
+- [x] **10b Engine** — `board.js` (`CELL_TYPES` catalogue, `isPlain`, no `lineTypes`), `statements.js` (`COMPOSITE`,
+  `unaryParts`; no `SAFE_PAIR`), `solver.js` (composite parts as unary masks, safe domain = plain cells); in
+  parallel `tests/reference.js` from RULES only (1 `sonnet` worker, self-test 83/83, ill-formed → throws).
+  Evidence: solver vs brute force 256 random v4 puzzles 0 mismatches (every kind used); sync point: production vs
+  reference 1 523 192 evaluations + validity/safe/thief/candidate counts on 60 boards, 0 mismatches.
+- [x] **10c Step solver + texts** — `steps.js` (technique `composite`, level 1, one step per composite statement;
+  safe/alarm paths removed), `text.js` (`SETTINGS`, `ZONES` with phrases + favoured items, `TYPE_TEXT` verbs /
+  phrases / genitives, park vs house zone nouns, subject-less texts).
+- [x] **10d Generator + tests** — generator (`pickZones`, per-kind palettes with favoured items, new WEIGHT/FAMILY,
+  `implies()` conventions, ≤ 1 `nobodyOn`): 3–46 ms per puzzle, unique by reference, map clues dominate. Tests
+  `helpers`/`solver`/`steps`/`generator` rewritten by 1 `sonnet` worker: 27/27 (18.8 s), no production bug; grades
+  medium 9×L1/31×L2, hard 14×L2/26×L3, expert 12×L2/8×L3; `otherZone` threshold 5 → 2 (measured 4/40), `notOn` is
+  the rarest kind (≈1/40). Accepted: the `trueStatements` pool may hold a statement true in every candidate (an
+  unused lone armchair); puzzles still satisfy Q5 because Q5 follows from Q1 + Q2 (RULES §6) and Q2 drops it.
+- [x] **10e UI + data** — `ui/app.js` (art for 13 tiles, planked floors / grass, walls vs hedges clipped to the board,
+  zone pill on the first empty floor, setting line above the board, card „Wszyscy zgodnie”, `evaluable` for
+  composite kinds, R0/R2 check texts, rules + legend + tutorial texts, storage `ktozwinal4:` dropping v1–v3), CSS,
+  `sw.js` `ktozwinal-v4`, readme; tutorial = RULES §8.1 (Domek, bed + armchair, 78 candidates), RULES §8.2 (Domek with
+  garden, 1 392 candidates), missions re-frozen (misja-1 Park, misja-2 Willa, title „Nocna wizyta”). Evidence:
+  `npm test` 36/36 (18.5 s); E2E `scratchpad/e2e-v4.mjs` 36/36 OK in Chrome, no console errors; screenshots
+  reviewed (tutorial, park mission, expert park).
+- [x] **10f Verification** — Workflow `verify-rules-v4` (20 agents: 2 × (opus split + sonnet/haiku worker rounds +
+  opus consolidate) + opus comparison; flow B independent until the comparison). Verdict: 0 BLOCKER, logic correct
+  on production inputs (evaluate vs reference 2.8 M evaluations, 322 solver/Q2 sets on 43 shipped/generated
+  puzzles, 790 generated puzzles Q1/Q2/Q4/Q5(n ≤ 6)/conventions, 293 puzzles step soundness + 15 k hint states,
+  ~7 400 texts vs RULES §5, 180 puzzles on production string seeds `dzien-…`/`losowa-…`). Reconciled and fixed:
+  MAJOR-1 R0 check text (now „sejf musi stać na gołej podłodze albo na trawie, a ostatnie wolne pole to dywan”,
+  park variant); MAJOR-2 production `evaluate` does not reject ill-formed statements → RULES §5 reworded (truth
+  undefined, reference rejects, production may assume well-formed input; owner rule: no validation for impossible
+  input); MINOR toast width (`max-content`, longer for long texts); zone pills smaller and clamped inside the
+  board; §9 lists mission `id`/`title`; `notOn` weight 1.2 → 2.5 (≈ 0.6 % → 2.6 % of statements) with `notInZone`
+  1.1 → 1.5 to keep the negative-kind test; step text „(w pracowni)” instead of the nominative. Accepted, not
+  changed: `evaluable` judges composite kinds only once the subject is placed (safe, 0 false marks in 2.6 M
+  checks); „pomieszczeniu” also for a house's outdoor zone (RULES §5); undo keeps the selected hero; labels may
+  still overlap on crowded boards. Not verified: real phone/Safari, desktop layout, day rollover of the daily
+  case, Q5 by the reference for n ≥ 7. Evidence after the fixes: `npm test` 36/36 (18.9 s); E2E `e2e-v4.mjs`
+  36/36 OK, no console errors; string-seed check 180 jobs, 0 bad; screenshots re-checked.
+
+## Stage 11 — Fix the known gaps of stage 10 `[x]` (owner request 2026-11-02: „to poprawiaj te błędy”)
+
+Scope: every item stage 10 left as accepted or unverified. P50 2 h / P80 3.5 h calendar (critical path fixes →
+E2E → two-flow verification → corrections); agent effort P50 3 h. P80 risk: verification finds wording issues.
+Main session implements (opus); verification = Workflow, 2 flows × (sonnet orchestrator + 2 workers), flow B
+independent until its comparison pass. Excluded: real phone test, deploy (owner's go).
+
+- [x] **11a Ill-formed statements rejected in production** — `checkStatement` / `checkStatements`
+  (`src/statements.js`, RULES §5 domains), called by `evaluate`, `solve` and the step solver `setup`; RULES §5 back
+  to „evaluators reject it”. Test `ill-formed statements … rejected by evaluate, solve and stepSolve` (15 cases).
+- [x] **11b Early false marks** — `ui/app.js` `brokenNow` replaces `evaluable`: a composite statement is false as
+  soon as a placed hero breaks their unary part (another hero on the only armchair before the subject is placed);
+  `alone` / `zoneCount` false once more placed heroes share the subject's zone than allowed.
+- [x] **11c Undo** — selects the hero whose move was undone (unchanged when only marks are undone).
+- [x] **11d Zone words** — house with an outdoor zone: „część posesji” (`ESTATE_WORDS`) instead of „pomieszczenie”;
+  RULES §5 + rules overlay („w tej samej części mapy”); generator test: no „pomieszcz…” text when a zone is outdoors.
+- [x] **11e Zone labels** — pill on the longest row run of plain cells of the zone (covers no furniture, no other
+  zone), font up to 20 (readable on 8×8 phones: was ≈ 7 px), two lines / squeeze only when needed.
+- [x] **11f Unverified items** — E2E `scratchpad/e2e-v4b.mjs` (env `ENGINE=webkit`, `VIEW=desktop`) adds: early
+  onlyOn mark, undo selection, pills apart/inside (tutorial, medium, expert), daily rollover 2 Nov 23:59 → 3 Nov
+  00:01 with a fixed clock (new board, old progress dropped, starts empty). Results: Chrome phone 48/48, WebKit
+  26.5 phone 48/48, Chrome desktop 1440×900 48/48, no console errors; `npm test` 37/37 (19.0 s).
+  WebKit is Safari's engine, not a real iPhone.
+- [x] **11g Verification** — Workflow `verify-stage-11` (9 agents: 2 × (sonnet split + 2 sonnet workers + sonnet
+  consolidate) + sonnet comparison; flow B independent until the comparison): 0 BLOCKER / MAJOR; `brokenNow` sound
+  by construction (sampled 171 k + 281 k flagged statements, 0 unsound); pills 0 invariant violations on 54 k pills;
+  wording clean on 298 puzzles. 3 MINOR fixed: `Object.hasOwn` in `checkStatement` (inherited names gave a
+  TypeError); zones without a plain cell (pill on furniture, ≈ 0.1 % of boards) → generator requires a plain cell
+  per zone (RULES §6, generator test); test gaps (`nobodyOn floor`, zone bounds, accepted boundaries). Re-verified
+  by Workflow `verify-stage-11-fixes` (2 sonnet workers): 4 mutants killed by the extended test; 5 994 / 5 994 boards
+  that already met the rule byte-identical with identical rng state; 400 puzzles OK, timing unchanged (expert mean
+  37 vs 34 ms). Note (INFO, by design): frozen missions no longer regenerate from their seeds (10f weight change
+  after freezing); the JSON is the source of truth. Final evidence: `npm test` 37/37 (19.2 s); E2E 48/48 in Chrome
+  phone, WebKit 26.5 phone and Chrome desktop, no console errors. Not verified: real phone.
+
 ## Checkpoint log
 
 - 2026-10-31 — Stage 0 done; plan created. Next: stage 1 (`RULES.md`).
@@ -546,3 +668,8 @@ diagonal thief rule; rewriting tutorial/examples by hand. Excluded: owner decisi
 - 2026-11-01 — Stage 9 done (rules v3), verified (two flows, 0 BLOCKER/MAJOR, 7 MINOR fixed, 4 accepted); `npm test` 33/33, E2E 28/28. Not committed, not deployed: waiting for the owner's go. Next: owner's phone test.
 - 2026-11-01 — 9g done (sudoku-like placement block in the UI), verified (`npm test` 33/33, E2E 33/33, 1 verifier OK). Not committed, not deployed: waiting for the owner's go.
 - 2026-11-01 — Stage 9 deployed (`4db4f12`), live E2E 33/33. Next: owner's phone test.
+- 2026-11-01 — Stage 10 planned (rules v4: no safe statements/`sees`, map clues, furniture, house/outdoor settings). Next: 10-0.
+- 2026-11-01 — 10-0…10e done (rules v4 engine, texts, generator, tests, UI, data); `npm test` 36/36, E2E 36/36. Next: 10f two-flow verification.
+- 2026-11-01 — Stage 10 done (rules v4), verified (two flows + comparison, 0 BLOCKER, 2 MAJOR + 5 MINOR fixed); `npm test` 36/36, E2E 36/36. Not committed, not deployed: waiting for the owner's go.
+- 2026-11-02 — Stage 11 (fix stage 10 gaps) 11a–11f done; `npm test` 37/37, E2E 48/48 × (Chrome phone, WebKit, desktop). Next: 11g verification.
+- 2026-11-02 — Stage 11 done, verified (two flows + comparison, 0 BLOCKER/MAJOR, 3 MINOR fixed and re-verified); `npm test` 37/37, E2E 48/48 × 3. Measured ≈ 1.5 h (P50 2 h). Not committed, not deployed: waiting for the owner's go.

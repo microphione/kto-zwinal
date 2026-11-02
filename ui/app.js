@@ -1,21 +1,22 @@
 // Mobile UI: mission list, board (SVG), hero cards, placement and checking. Logic lives in ../src.
-import { getBoard, safeOf } from '../src/board.js';
-import { evaluate, isValidPlacement, thiefOf, UNARY, PAIR, SAFE_PAIR } from '../src/statements.js';
-import { statementText, stepText, cellName, droneText } from '../src/text.js';
+import { getBoard, safeOf, isPlain } from '../src/board.js';
+import { evaluate, isValidPlacement, thiefOf, unaryParts, unaryHolds, UNARY, PAIR, COMPOSITE } from '../src/statements.js';
+import { statementText, stepText, cellName, droneText, areaWords, SETTINGS, TYPE_TEXT } from '../src/text.js';
 import { nextHint, nextDrone } from '../src/steps.js';
 import { DIFFICULTIES } from '../src/generator.js';
 
 // Fixed missions are frozen JSON (scripts/freeze-missions.js), so generator changes never alter them.
 const MISSIONS = [
   { id: 'misja-1', difficulty: 'easy', title: 'Pierwszy skok' },
-  { id: 'misja-2', difficulty: 'medium', title: 'Akcja w bazie' },
+  { id: 'misja-2', difficulty: 'medium', title: 'Nocna wizyta' },
 ];
 const DIFF_LABEL = { easy: 'Łatwa', medium: 'Średnia', hard: 'Trudna', expert: 'Ekspert' };
 const HERO_COLORS = {
   Bobo: '#ff8c42', Mira: '#ff5d9e', Zyg: '#4cc9f0', Kora: '#9b5de5',
   Rufi: '#e63946', Tesa: '#06d6a0', Grot: '#8d6e63', Lumi: '#f4b400',
 };
-const ZONE_TINTS = ['#ffe8a3', '#c9ecff', '#d5f5b8', '#ffd4d4', '#e3d6ff', '#ffdcc2'];
+// Floors per zone kind: wooden / tiled rooms, grass outdoors.
+const FLOOR_TINTS = { in: ['#f3d9b1', '#dfe9f2', '#f6e3c4', '#efd9e3', '#e7dcc7', '#e2efd9', '#f1d3b6', '#e8e1f3'], out: ['#b9e39b', '#a7d98a', '#c6eaa3', '#b1df98'] };
 const INK = '#1b1530';
 const S = 100;
 const M = 44;
@@ -24,10 +25,9 @@ const app = document.getElementById('app');
 let game = null;
 
 // ---------- storage ----------
-// v3 (rows and columns, safe on the last free cell) uses its own namespace: progress and cases saved by
-// v1/v2 no longer fit and are removed.
-const NS = 'ktozwinal3';
-for (const k of Object.keys(localStorage)) if (k.startsWith('ktozwinal:') || k.startsWith('ktozwinal2:')) localStorage.removeItem(k);
+// v4 (houses, map clues) uses its own namespace: progress and cases saved by v1–v3 no longer fit and are removed.
+const NS = 'ktozwinal4';
+for (const k of Object.keys(localStorage)) if (/^ktozwinal[23]?:/.test(k)) localStorage.removeItem(k);
 const key = (seed, difficulty) => `${NS}:${difficulty}:${seed}`;
 const SOLVED = `${NS}:solved`;
 const SEEN_RULES = `${NS}:seenRules`;
@@ -108,7 +108,7 @@ function toast(text) {
   document.querySelector('.toast')?.remove();
   const t = el(`<div class="toast">${esc(text)}</div>`);
   document.body.appendChild(t);
-  setTimeout(() => t.remove(), 2600);
+  setTimeout(() => t.remove(), Math.max(2600, text.length * 45));
 }
 
 function overlay(html) {
@@ -323,19 +323,27 @@ function isSolved() {
   return isValidPlacement(game.puzzle, game.placement) && game.puzzle.statements.every(st => evaluate(game.puzzle, game.placement, st));
 }
 
-// Whether a statement can already be judged: its heroes are placed, and the safe has appeared if the truth
-// depends on it.
-function evaluable(st) {
-  const p = game.placement;
-  if (st.type === 'alarm') return shownSafe() >= 0;
-  if (SAFE_PAIR[st.type]) return shownSafe() >= 0;
-  if (UNARY.has(st.type)) return p[st.who] >= 0;
-  if (PAIR.has(st.type)) return p[st.who] >= 0 && p[st.hero] >= 0;
-  return p.every(c => c >= 0);
+// Whether a statement is already false for good, whatever the unplaced heroes do.
+function brokenNow(st) {
+  const { puzzle, placement: p } = game;
+  // A composite statement is one unary part per hero: any placed hero who breaks their part breaks it, even
+  // before the subject is placed (another hero already on the only armchair).
+  if (COMPOSITE.has(st.type)) {
+    const board = getBoard(puzzle);
+    return unaryParts(st, p.length).some(part => part.st && p[part.hero] >= 0 && !unaryHolds(board, part.st, p[part.hero]));
+  }
+  if (UNARY.has(st.type)) return p[st.who] >= 0 && !evaluate(puzzle, p, st);
+  if (PAIR.has(st.type)) return p[st.who] >= 0 && p[st.hero] >= 0 && !evaluate(puzzle, p, st);
+  if (p.every(c => c >= 0)) return !evaluate(puzzle, p, st);
+  // `alone` / `zoneCount`: more heroes already in the subject's zone than the statement allows.
+  if (p[st.who] < 0) return false;
+  const board = getBoard(puzzle);
+  const inZone = p.filter(c => c >= 0 && board.zone[c] === board.zone[p[st.who]]).length;
+  return inZone > (st.type === 'alone' ? 1 : st.n);
 }
 
 function falseStatements() {
-  return new Set(game.puzzle.statements.filter(st => evaluable(st) && !evaluate(game.puzzle, game.placement, st)));
+  return new Set(game.puzzle.statements.filter(brokenNow));
 }
 
 function check() {
@@ -346,9 +354,11 @@ function check() {
   if (safe >= 0) {
     const board = getBoard(game.puzzle);
     const thieves = game.placement.filter(c => board.thiefSpots[safe].includes(c)).length;
-    if (board.type[safe] !== 'ground') problems.push('sejf stał na gołej ziemi, a ostatnie wolne pole nie jest gołą ziemią');
-    else if (thieves > 1) problems.push('po skosie przy sejfie, w jego strefie, stoi więcej niż jedna osoba');
-    else if (thieves === 0) problems.push('nikt nie stoi po skosie przy sejfie w jego strefie');
+    const noun = areaWords(game.puzzle).noun;
+    const plain = game.puzzle.setting === 'park' ? 'na trawie' : 'na gołej podłodze albo na trawie';
+    if (!isPlain(board.type[safe])) problems.push(`sejf musi stać ${plain}, a ostatnie wolne pole to ${TYPE_TEXT[board.type[safe]].name.toLowerCase()}`);
+    else if (thieves > 1) problems.push(`po skosie przy sejfie, w jego ${noun}, stoi więcej niż jedna osoba`);
+    else if (thieves === 0) problems.push(`nikt nie stoi po skosie przy sejfie w jego ${noun}`);
   }
   const wrong = falseStatements().size;
   const few = wrong % 10 >= 2 && wrong % 10 <= 4 && (wrong % 100 < 12 || wrong % 100 > 14);
@@ -360,6 +370,9 @@ function check() {
 function undo() {
   const last = game.history.pop();
   if (!last) return toast('Nie ma czego cofnąć.');
+  // the hero whose move is undone becomes the selected one again (unchanged when only marks are undone)
+  const moved = last.placement.findIndex((c, h) => c !== game.placement[h]);
+  if (moved >= 0) game.selected = moved;
   game.placement = last.placement;
   game.marks = last.marks;
   game.won = false;
@@ -439,12 +452,18 @@ function sendDrone() {
 
 // ---------- drawing ----------
 const ART = {
-  crate: `<rect x="12" y="12" width="76" height="76" rx="8" fill="#d08a3c" stroke="${INK}" stroke-width="6"/><rect x="22" y="22" width="56" height="56" rx="3" fill="none" stroke="#8a5420" stroke-width="5"/><path d="M24 24 L76 76" stroke="#8a5420" stroke-width="7"/>`,
-  barrel: `<rect x="22" y="10" width="56" height="80" rx="22" fill="#c2532d" stroke="${INK}" stroke-width="6"/><path d="M24 34 H76 M24 66 H76" stroke="#7a2f17" stroke-width="6"/><ellipse cx="50" cy="22" rx="14" ry="5" fill="#e07a4f"/>`,
+  bed: `<rect x="10" y="6" width="80" height="88" rx="10" fill="#f7f3ea" stroke="${INK}" stroke-width="5"/><rect x="18" y="12" width="64" height="20" rx="8" fill="#fff" stroke="${INK}" stroke-width="4"/><path d="M10 40 H90 V84 a10 10 0 0 1 -10 10 H20 a10 10 0 0 1 -10 -10 Z" fill="#6c8cff" stroke="${INK}" stroke-width="5"/><path d="M10 52 H90" stroke="#4a63c9" stroke-width="4"/>`,
+  armchair: `<rect x="12" y="8" width="76" height="34" rx="12" fill="#e0565b" stroke="${INK}" stroke-width="5"/><rect x="6" y="30" width="20" height="58" rx="9" fill="#c94347" stroke="${INK}" stroke-width="5"/><rect x="74" y="30" width="20" height="58" rx="9" fill="#c94347" stroke="${INK}" stroke-width="5"/><rect x="24" y="38" width="52" height="50" rx="8" fill="#ef7a7e" stroke="${INK}" stroke-width="4"/>`,
+  rug: `<rect x="8" y="14" width="84" height="72" rx="6" fill="#c75b7a" stroke="${INK}" stroke-width="5"/><rect x="18" y="24" width="64" height="52" rx="4" fill="none" stroke="#ffd166" stroke-width="4"/><path d="M50 30 L66 50 L50 70 L34 50 Z" fill="none" stroke="#ffd166" stroke-width="4"/><path d="M14 10 v-4 M26 10 v-4 M38 10 v-4 M50 10 v-4 M62 10 v-4 M74 10 v-4 M86 10 v-4 M14 90 v4 M26 90 v4 M38 90 v4 M50 90 v4 M62 90 v4 M74 90 v4 M86 90 v4" stroke="${INK}" stroke-width="3" stroke-linecap="round"/>`,
+  table: `<rect x="10" y="18" width="80" height="64" rx="10" fill="#b5763c" stroke="${INK}" stroke-width="6"/><rect x="20" y="28" width="60" height="44" rx="6" fill="#f4f1e8" stroke="#8a5420" stroke-width="3"/><circle cx="50" cy="50" r="9" fill="#ffcf5c" stroke="${INK}" stroke-width="3"/>`,
+  wardrobe: `<rect x="14" y="6" width="72" height="88" rx="6" fill="#8d5a34" stroke="${INK}" stroke-width="6"/><path d="M50 10 V90" stroke="${INK}" stroke-width="4"/><circle cx="43" cy="52" r="4" fill="#ffd166" stroke="${INK}" stroke-width="2"/><circle cx="57" cy="52" r="4" fill="#ffd166" stroke="${INK}" stroke-width="2"/><path d="M22 16 H42 M58 16 H78" stroke="#b07a4c" stroke-width="4"/>`,
+  plant: `<path d="M50 56 C30 50 20 30 26 14 C40 22 48 36 50 56 C52 36 60 22 74 14 C80 30 70 50 50 56 Z" fill="#3fae5a" stroke="#1e6b34" stroke-width="4"/><path d="M50 56 C44 40 46 24 50 10 C54 24 56 40 50 56 Z" fill="#5ccf74" stroke="#1e6b34" stroke-width="3"/><path d="M30 56 H70 L64 90 H36 Z" fill="#d9734e" stroke="${INK}" stroke-width="5" stroke-linejoin="round"/>`,
+  bush: `<circle cx="32" cy="62" r="20" fill="#47b862" stroke="#1e6b34" stroke-width="4"/><circle cx="68" cy="62" r="20" fill="#47b862" stroke="#1e6b34" stroke-width="4"/><circle cx="50" cy="42" r="22" fill="#5ccf74" stroke="#1e6b34" stroke-width="4"/><circle cx="38" cy="38" r="3" fill="#ff5d73"/><circle cx="64" cy="58" r="3" fill="#ff5d73"/>`,
+  bench: `<path d="M16 62 V86 M84 62 V86" stroke="${INK}" stroke-width="7" stroke-linecap="round"/><rect x="6" y="14" width="88" height="14" rx="5" fill="#c98a4b" stroke="${INK}" stroke-width="4"/><rect x="6" y="34" width="88" height="14" rx="5" fill="#c98a4b" stroke="${INK}" stroke-width="4"/><rect x="6" y="54" width="88" height="14" rx="5" fill="#d99b5c" stroke="${INK}" stroke-width="4"/>`,
+  tree: `<rect x="42" y="58" width="16" height="34" rx="4" fill="#8d5a34" stroke="${INK}" stroke-width="5"/><circle cx="50" cy="40" r="32" fill="#2f9e4f" stroke="#1b5e2f" stroke-width="5"/><circle cx="38" cy="32" r="10" fill="#4fc06a"/><circle cx="62" cy="46" r="7" fill="#4fc06a"/>`,
   rock: `<path d="M16 76 L26 38 L50 18 L78 28 L88 68 L66 88 L30 88 Z" fill="#9aa3ad" stroke="${INK}" stroke-width="6" stroke-linejoin="round"/><path d="M34 40 L50 28 L66 34" fill="none" stroke="#d3d8de" stroke-width="5" stroke-linecap="round"/>`,
+  pond: `<ellipse cx="50" cy="52" rx="42" ry="34" fill="#4cb3e6" stroke="${INK}" stroke-width="6"/><path d="M28 46 q8 -6 16 0 M54 62 q8 -6 16 0" stroke="#bfe9ff" stroke-width="4" fill="none" stroke-linecap="round"/><circle cx="66" cy="40" r="8" fill="#5ccf74" stroke="#1e6b34" stroke-width="3"/>`,
   safe: `<rect x="6" y="6" width="88" height="88" rx="14" fill="none" stroke="#ffc531" stroke-width="5" stroke-dasharray="10 7"/><rect x="14" y="14" width="72" height="72" rx="10" fill="#4f5d75" stroke="${INK}" stroke-width="6"/><circle cx="50" cy="50" r="17" fill="#ffc531" stroke="${INK}" stroke-width="5"/><path d="M50 37 V50 H60" stroke="${INK}" stroke-width="4" fill="none"/>`,
-  bush: `<circle cx="32" cy="62" r="20" fill="#47b862" stroke="#1e6b34" stroke-width="4"/><circle cx="68" cy="62" r="20" fill="#47b862" stroke="#1e6b34" stroke-width="4"/><circle cx="50" cy="42" r="22" fill="#5ccf74" stroke="#1e6b34" stroke-width="4"/>`,
-  pad: `<circle cx="50" cy="50" r="33" fill="#7b6cff" stroke="${INK}" stroke-width="5"/><circle cx="50" cy="50" r="20" fill="none" stroke="#c9c2ff" stroke-width="4"/><path d="M38 56 L50 42 L62 56" fill="none" stroke="#fff" stroke-width="6" stroke-linecap="round" stroke-linejoin="round"/>`,
 };
 
 function heroToken(hero, x, y, { selected, conflict }) {
@@ -467,12 +486,19 @@ function boardSvg() {
   const x0 = c => M + c * S;
   const y0 = r => M + r * S;
 
-  // floor per zone
+  // floor per zone: planks indoors, grass tufts outdoors
+  const kindOf = i => puzzle.zoneKinds[board.zone[i]];
   for (let i = 0; i < n * n; i++) {
     const r = Math.floor(i / n), c = i % n;
-    const tint = ZONE_TINTS[board.zone[i] % ZONE_TINTS.length];
+    const tints = FLOOR_TINTS[kindOf(i)];
+    const tint = tints[board.zone[i] % tints.length];
     parts.push(`<rect x="${x0(c)}" y="${y0(r)}" width="${S}" height="${S}" fill="${tint}"/>`);
-    if ((r + c) % 2) parts.push(`<rect x="${x0(c)}" y="${y0(r)}" width="${S}" height="${S}" fill="#fff" opacity="0.22"/>`);
+    if (kindOf(i) === 'in') {
+      const shift = (r % 2) * 50;
+      parts.push(`<path d="M${x0(c)} ${y0(r) + 25} h${S} M${x0(c)} ${y0(r) + 50} h${S} M${x0(c)} ${y0(r) + 75} h${S} M${x0(c) + 30 + shift / 2} ${y0(r)} v25 M${x0(c) + 70 - shift / 3} ${y0(r) + 50} v25" stroke="#7a5230" stroke-opacity="0.13" stroke-width="2"/>`);
+    } else if ((r * 7 + c * 3) % 3 === 0) {
+      parts.push(`<path d="M${x0(c) + 18} ${y0(r) + 82} l4 -10 l4 10 M${x0(c) + 74} ${y0(r) + 24} l4 -10 l4 10" stroke="#3f8a35" stroke-opacity="0.45" stroke-width="3" fill="none" stroke-linecap="round"/>`);
+    }
   }
   // sight shading of placed heroes: their whole row and column (nothing blocks sight)
   if (game.showSight) {
@@ -490,26 +516,51 @@ function boardSvg() {
   for (let k = 1; k < n; k++) {
     parts.push(`<path d="M${x0(k)} ${M} V${M + n * S} M${M} ${y0(k)} H${M + n * S}" stroke="${INK}" stroke-opacity="0.15" stroke-width="2"/>`);
   }
-  // painted zone borders
-  const segs = [];
+  // zone borders: walls next to a room, hedges between two outdoor zones (neither blocks sight)
+  const walls = [], hedges = [];
   for (let i = 0; i < n * n; i++) {
     const r = Math.floor(i / n), c = i % n;
-    if (c + 1 < n && board.zone[i] !== board.zone[i + 1]) segs.push(`M${x0(c + 1)} ${y0(r)} V${y0(r + 1)}`);
-    if (r + 1 < n && board.zone[i] !== board.zone[i + n]) segs.push(`M${x0(c)} ${y0(r + 1)} H${x0(c + 1)}`);
+    const border = (j, seg) => {
+      if (board.zone[i] === board.zone[j]) return;
+      (kindOf(i) === 'out' && kindOf(j) === 'out' ? hedges : walls).push(seg);
+    };
+    if (c + 1 < n) border(i + 1, `M${x0(c + 1)} ${y0(r)} V${y0(r + 1)}`);
+    if (r + 1 < n) border(i + n, `M${x0(c)} ${y0(r + 1)} H${x0(c + 1)}`);
   }
-  parts.push(`<path d="${segs.join(' ')}" stroke="${INK}" stroke-opacity="0.55" stroke-width="12" stroke-linecap="round"/>`);
-  parts.push(`<path d="${segs.join(' ')}" stroke="#fff" stroke-width="6" stroke-dasharray="16 10" stroke-linecap="round"/>`);
+  if (walls.length) {
+    parts.push(`<g clip-path="url(#inside)"><path d="${walls.join(' ')}" stroke="${INK}" stroke-width="14" stroke-linecap="square"/>` +
+      `<path d="${walls.join(' ')}" stroke="#a88b6a" stroke-width="6" stroke-linecap="square"/></g>`);
+  }
+  if (hedges.length) {
+    parts.push(`<g clip-path="url(#inside)"><path d="${hedges.join(' ')}" stroke="#2f6b2a" stroke-width="12" stroke-linecap="round"/>` +
+      `<path d="${hedges.join(' ')}" stroke="#5cb84f" stroke-width="6" stroke-dasharray="10 8" stroke-linecap="round"/></g>`);
+  }
   // objects of the map
   for (let i = 0; i < n * n; i++) {
     const art = ART[board.type[i]];
     if (art) parts.push(`<g transform="translate(${x0(i % n)} ${y0(Math.floor(i / n))})">${art}</g>`);
   }
-  // zone names (first cell of each zone)
+  // Zone names on the longest run of plain cells in a row of each zone (first such run), so a pill wide enough
+  // to read on an 8×8 phone board covers no furniture and no other zone; heroes, the safe and marks draw over it.
   board.zoneCells.forEach((cells, z) => {
-    const i = cells[0];
+    let i = cells[0], run = 0;
+    for (const j of cells) {
+      if (!isPlain(board.type[j]) || (j % n && board.zone[j - 1] === z && isPlain(board.type[j - 1]))) continue;
+      let len = 1;
+      while ((j + len) % n && board.zone[j + len] === z && isPlain(board.type[j + len])) len++;
+      if (len > run) { i = j; run = len; }
+    }
+    const room = Math.max(run, 1) * S - 8;
+    // Two-word names take two lines when one does not fit; a name still too wide is squeezed.
     const label = puzzle.zoneNames[z];
-    const w = label.length * 11 + 14;
-    parts.push(`<g transform="translate(${x0(i % n) + 4} ${y0(Math.floor(i / n)) + 4})"><rect width="${w}" height="24" rx="12" fill="#fff" stroke="${INK}" stroke-width="3"/><text x="${w / 2}" y="17" text-anchor="middle" font-family="Nunito, sans-serif" font-weight="800" font-size="15" fill="${INK}">${esc(label)}</text></g>`);
+    const CHAR = 0.69; // average glyph width of Nunito 800, in font sizes
+    const lines = label.length * 20 * CHAR + 12 > room && label.includes(' ') ? label.split(' ') : [label];
+    const longest = Math.max(...lines.map(l => l.length));
+    const fs = Math.max(13, Math.min(20, (room - 12) / (longest * CHAR)));
+    const w = Math.min(longest * fs * CHAR + 12, room);
+    const lh = fs + 2;
+    const text = lines.map((l, j) => `<text x="${w / 2}" y="${4 + fs * 0.95 + j * lh}" text-anchor="middle"${l.length * fs * CHAR + 12 > w ? ` textLength="${w - 12}" lengthAdjust="spacingAndGlyphs"` : ''} font-family="Nunito, sans-serif" font-weight="800" font-size="${fs.toFixed(1)}" fill="${INK}">${esc(l)}</text>`).join('');
+    parts.push(`<g transform="translate(${x0(i % n) + 4} ${y0(Math.floor(i / n)) + 4})"><rect width="${w.toFixed(1)}" height="${(8 + lines.length * lh).toFixed(1)}" rx="11" fill="#fff" stroke="${INK}" stroke-width="3"/>${text}</g>`);
   });
   // the safe, once it has appeared on the last free crossing
   const safe = shownSafe();
@@ -541,7 +592,7 @@ function boardSvg() {
   for (let i = 0; i < n * n; i++) {
     parts.push(`<rect class="cell" data-cell="${i}" x="${x0(i % n)}" y="${y0(Math.floor(i / n))}" width="${S}" height="${S}" fill="transparent"/>`);
   }
-  const defs = `<defs><pattern id="seen" width="22" height="22" patternUnits="userSpaceOnUse" patternTransform="rotate(45)"><rect width="22" height="22" fill="#ff5d73" opacity="0.12"/><rect width="8" height="22" fill="#e63946" opacity="0.45"/></pattern></defs>`;
+  const defs = `<defs><clipPath id="inside"><rect x="${M}" y="${M}" width="${n * S}" height="${n * S}"/></clipPath><pattern id="seen" width="22" height="22" patternUnits="userSpaceOnUse" patternTransform="rotate(45)"><rect width="22" height="22" fill="#ff5d73" opacity="0.12"/><rect width="8" height="22" fill="#e63946" opacity="0.45"/></pattern></defs>`;
   return `<svg class="board" viewBox="0 0 ${W} ${W}" xmlns="http://www.w3.org/2000/svg">${defs}${parts.join('')}</svg>`;
 }
 
@@ -552,6 +603,7 @@ function renderGame() {
   const top = el(`<div class="topbar"><button class="btn small ghost" data-act="home">Menu</button><h2>${esc(game.title)}</h2><button class="btn small ghost" data-act="rules">?</button></div>`);
   app.appendChild(top);
 
+  app.appendChild(el(`<p class="scene">${esc(SETTINGS[puzzle.setting].title)} · ${esc(puzzle.zoneNames.join(', '))}</p>`));
   const wrap = el(`<div class="board-wrap">${boardSvg()}</div>`);
   wrap.querySelector('svg').addEventListener('click', e => {
     const t = e.target.closest('[data-cell]');
@@ -580,10 +632,12 @@ function renderGame() {
     card.onclick = () => { game.selected = h; game.mode = 'place'; renderGame(); };
     cards.appendChild(card);
   });
-  const alarms = puzzle.statements.filter(st => st.type === 'alarm');
+  const shared = puzzle.statements.filter(st => st.who === undefined);
+  if (shared.length) {
+    cards.appendChild(el(`<div class="card shared"><div class="avatar">!</div><div class="body"><div class="hero-name">Wszyscy zgodnie</div>${shared.map(st => `<p class="stmt ${wrong.has(st) ? 'bad' : ''}">„${esc(statementText(puzzle, st))}”</p>`).join('')}</div></div>`));
+  }
   const safe = shownSafe();
-  const safeLines = alarms.map(st => `<p class="stmt ${wrong.has(st) ? 'bad' : ''}">${esc(statementText(puzzle, st))}</p>`).join('') +
-    (safe < 0 ? `<p class="stmt silent">Pojawi się sam na jedynym wolnym polu, gdy ustawisz wszystkich.</p>` : '');
+  const safeLines = safe < 0 ? `<p class="stmt silent">Pojawi się sam na jedynym wolnym polu, gdy ustawisz wszystkich.</p>` : '';
   const safeWhere = safe >= 0 ? `<span class="where">pole ${coord(safe, puzzle.n)}</span>` : '';
   cards.appendChild(el(`<div class="card safe ${safe >= 0 ? 'placed' : ''}">
     <div class="avatar safe-avatar">${icon('safe')}</div>
@@ -636,26 +690,32 @@ function icon(type) {
 
 function showRules() {
   const o = overlay(`<h2>Zasady</h2>
-    <p><b>Cel:</b> ustal, gdzie stał każdy bohater. Sejf sam się wtedy znajdzie, a z nim złodziej.</p>
+    <p><b>Cel:</b> ustal, gdzie był każdy bohater. Sejf sam się wtedy znajdzie, a z nim złodziej.</p>
     <ul>
-      <li>Każdy stał na innym wolnym polu: na ziemi, w krzakach albo na wyrzutni.</li>
-      <li><b>Nikt nikogo nie widział:</b> w każdym rzędzie i każdej kolumnie stoi najwyżej jedna osoba. Nic nie zasłania widoku: ani przeszkody, ani granice stref.</li>
-      <li><b>Sejf</b> stał na jedynym polu, którego rząd i kolumna są wolne od ludzi. To pole musi być gołą ziemią.</li>
-      <li><b>Złodziej</b> to jedyna osoba stojąca po skosie przy sejfie, w tej samej strefie co sejf.</li>
-      <li>„Obok” = tuż nad, pod, z lewej lub z prawej, w tej samej strefie.</li>
-      <li>„Widziałem X” = w moim rzędzie albo kolumnie był X.</li>
+      <li>Każda sprawa dzieje się w innym domu, czasem z ogrodem, albo w parku. Mapa dzieli się na pomieszczenia; ogród, taras czy las przy domu to osobna część posesji (w parku: części parku).</li>
+      <li>Każdy był na innym polu: na podłodze, na łóżku (leżał), na fotelu (siedział), na dywanie, na trawie, w krzakach albo na ławce (siedział). Na stole, szafie, kwiatku, drzewie, skale i stawie nikt nie stał.</li>
+      <li><b>Nikt nikogo nie widział:</b> w każdym rzędzie i każdej kolumnie stoi najwyżej jedna osoba. Nic nie zasłania widoku: ani meble, ani ściany.</li>
+      <li><b>Sejf</b> stał na jedynym polu, którego rząd i kolumna są wolne od ludzi. To pole to goła podłoga albo trawa.</li>
+      <li><b>Złodziej</b> to jedyna osoba stojąca po skosie przy sejfie, w tej samej części mapy co sejf (pomieszczeniu, ogrodzie, części parku).</li>
+      <li>„Obok” = tuż nad, pod, z lewej lub z prawej, w tej samej części mapy.</li>
+      <li>„Jako jedyny siedziałem na fotelu” = siedział na fotelu, a nikt inny nie siedział na żadnym fotelu. „Jako jedyna byłam w kuchni” = w kuchni nie było nikogo innego.</li>
+      <li>„Wszyscy zgodnie: nikt nie leżał na łóżku” = żadne łóżko nie było zajęte.</li>
       <li>„Gdzieś na północ od” = w dowolnym rzędzie wyżej (kolumna bez znaczenia).</li>
-      <li>„Gdzieś na północ od sejfu” = w dowolnym rzędzie wyżej niż sejf.</li>
-      <li>Alarm podaje strefę, w której stał sejf.</li>
       <li>Dron (od poziomu średniego) to dodatkowa podpowiedź: mówi, kto stał w jednym rzędzie albo kolumnie.</li>
       <li>Wszystkie zeznania są prawdziwe. Rozwiązanie jest dokładnie jedno i da się do niego dojść bez dronów.</li>
     </ul>
     <div class="legend">
-      ${icon('bush')}<span>Krzaki: można stanąć</span>
-      ${icon('pad')}<span>Wyrzutnia: można stanąć</span>
-      ${icon('crate')}<span>Skrzynia: przeszkoda</span>
-      ${icon('barrel')}<span>Beczka: przeszkoda</span>
+      ${icon('bed')}<span>Łóżko: można leżeć</span>
+      ${icon('armchair')}<span>Fotel: można siedzieć</span>
+      ${icon('rug')}<span>Dywan: można stać</span>
+      ${icon('bush')}<span>Krzaki: można stać</span>
+      ${icon('bench')}<span>Ławka: można siedzieć</span>
+      ${icon('table')}<span>Stół: przeszkoda</span>
+      ${icon('wardrobe')}<span>Szafa: przeszkoda</span>
+      ${icon('plant')}<span>Kwiatek: przeszkoda</span>
+      ${icon('tree')}<span>Drzewo: przeszkoda</span>
       ${icon('rock')}<span>Skała: przeszkoda</span>
+      ${icon('pond')}<span>Staw: przeszkoda</span>
       ${icon('safe')}<span>Sejf: pojawia się sam, gdy ustawisz wszystkich</span>
     </div>
     <p><b>Sterowanie:</b> wybierz bohatera z listy i stuknij pole. Stuknij jeszcze raz, żeby zdjąć. Tryb „Krzyżyk” zaznacza pola wykluczone. Czerwone pola to rzędy i kolumny zajęte przez postawionych bohaterów: nie da się tam postawić nikogo innego.</p>
@@ -665,12 +725,12 @@ function showRules() {
 
 function showTutorial() {
   const o = overlay(`<h2>Samouczek</h2>
-    <p>Ktoś obrobił sejf. Na mapie stały 3 osoby, a Twoim zadaniem jest ustalić, kto gdzie stał.</p>
+    <p>Ktoś obrobił sejf w domku letniskowym. Były tam 3 osoby, a Twoim zadaniem jest ustalić, kto gdzie był.</p>
     <ul>
       <li><b>Nikt nikogo nie widział:</b> w każdym rzędzie i każdej kolumnie stoi najwyżej jedna osoba. Nic nie zasłania widoku.</li>
-      <li><b>Sejf jest ukryty:</b> stał na jedynym polu, którego rząd i kolumna zostały wolne. Zawsze na gołej ziemi. Pojawi się sam, gdy ustawisz wszystkich.</li>
-      <li>Złodziej to jedyna osoba stojąca po skosie przy sejfie, w tej samej strefie.</li>
-      <li>Każde zeznanie jest prawdziwe. Zacznij od Bobo: stał na wyrzutni, a wyrzutnia jest tylko jedna.</li>
+      <li><b>Sejf jest ukryty:</b> stał na jedynym polu, którego rząd i kolumna zostały wolne. Zawsze na gołej podłodze. Pojawi się sam, gdy ustawisz wszystkich.</li>
+      <li>Złodziej to jedyna osoba stojąca po skosie przy sejfie, w tym samym pomieszczeniu.</li>
+      <li>Każde zeznanie jest prawdziwe. Zacznij od Zyga: leżał na łóżku, a łóżko jest tylko jedno.</li>
       <li>Nie wiesz, co dalej? Stuknij „Podpowiedź”: zobaczysz tok rozumowania krok po kroku.</li>
     </ul>
     <div class="actions"><button class="btn ghost" data-a="rules">Pełne zasady</button><button class="btn" data-a="ok">Zaczynam!</button></div>`);

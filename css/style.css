@@ -135,13 +135,17 @@ svg.board .cell { cursor: pointer; }
 .stmt.bad { color: #d62839; text-decoration: underline wavy; }
 .card.drone .avatar { background: #59c3c3; border-radius: 12px; }
 .card.safe .avatar { background: #ffe8a3; border-radius: 12px; }
+.card.shared .avatar { background: #ffd166; border-radius: 12px; font-size: 26px; }
+.scene { color: #e8dcff; text-align: center; margin: 0 0 6px; font-weight: 800; font-size: 14px; }
 .btn[disabled] { opacity: 0.45; }
 
 .toast {
   position: fixed;
-  left: 50%;
+  left: 5vw;
+  right: 5vw;
   bottom: 24px;
-  transform: translateX(-50%);
+  margin: 0 auto;
+  width: max-content;
   background: var(--ink);
   color: #fff;
   padding: 10px 16px;

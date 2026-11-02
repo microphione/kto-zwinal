@@ -2,8 +2,8 @@
 // The safe is searched as one more piece (index k): heroes and the safe are N pieces in N rows and N columns,
 // one per row and column (RULES.md §2, R1). Every placement returned is re-checked with the plain evaluators
 // (isValidPlacement + evaluate).
-import { getBoard } from './board.js';
-import { UNARY, PAIR, SAFE_PAIR, unaryHolds, pairHolds, evaluate, isValidPlacement } from './statements.js';
+import { getBoard, isPlain } from './board.js';
+import { UNARY, PAIR, COMPOSITE, unaryParts, unaryHolds, pairHolds, evaluate, isValidPlacement, checkStatements } from './statements.js';
 
 function popcount(x) {
   x -= (x >>> 1) & 0x55555555;
@@ -49,8 +49,8 @@ function boardTables(board) {
       zoneLo.push(lo);
       zoneHi.push(hi);
     }
-    // R0 + R2: the safe stands on ground with at least one thief spot.
-    const safeCells = board.walkCells.filter(s => board.type[s] === 'ground' && board.thiefSpots[s].length > 0);
+    // R0 + R2: the safe stands on a plain cell with at least one thief spot.
+    const safeCells = board.walkCells.filter(s => isPlain(board.type[s]) && board.thiefSpots[s].length > 0);
     t = { blockLo, blockHi, spotLo, spotHi, zoneLo, zoneHi, all: maskOf(board.walkCells), safeCells, unary: new Map(), pair: new Map() };
     tables.set(board, t);
   }
@@ -86,6 +86,7 @@ function pairTables(board, t, type) {
 // `rng` (optional) randomises the cell order, used by the generator to sample diverse solutions.
 // `maxNodes` bounds the search; `aborted: true` means the result is incomplete (proves nothing).
 export function solve(puzzle, limit = 2, rng = null, maxNodes = Infinity) {
+  checkStatements(puzzle);
   const board = getBoard(puzzle);
   const k = puzzle.heroes.length;
   const S = k;
@@ -96,19 +97,24 @@ export function solve(puzzle, limit = 2, rng = null, maxNodes = Infinity) {
   const { blockLo, blockHi, spotLo, spotHi, zoneLo, zoneHi } = t;
   const [allLo, allHi] = t.all;
   const domLo = new Int32Array(pieces), domHi = new Int32Array(pieces);
+  // Unary statements and the per-hero parts of composite ones restrict the heroes' domains.
+  const restrictions = [];
+  for (const st of statements) {
+    if (UNARY.has(st.type)) restrictions.push({ hero: st.who, st });
+    else if (COMPOSITE.has(st.type)) restrictions.push(...unaryParts(st, k).filter(p => p.st));
+  }
   for (let h = 0; h < k; h++) {
     let lo = allLo, hi = allHi;
-    for (const st of statements) {
-      if (st.who !== h || !UNARY.has(st.type) || SAFE_PAIR[st.type]) continue;
-      const m = unaryMask(board, t, st);
+    for (const r of restrictions) {
+      if (r.hero !== h) continue;
+      const m = unaryMask(board, t, r.st);
       lo &= m[0];
       hi &= m[1];
     }
     domLo[h] = lo;
     domHi[h] = hi;
   }
-  const alarms = statements.filter(st => st.type === 'alarm');
-  [domLo[S], domHi[S]] = maskOf(t.safeCells.filter(s => alarms.every(st => board.zone[s] === st.zone)));
+  [domLo[S], domHi[S]] = maskOf(t.safeCells);
 
   // links[a * pieces + b]: tables T with T[x] = cells allowed for b when a stands on x.
   const links = Array.from({ length: pieces * pieces }, () => []);
@@ -119,7 +125,6 @@ export function solve(puzzle, limit = 2, rng = null, maxNodes = Infinity) {
   };
   for (const st of statements) {
     if (PAIR.has(st.type)) link(st.type, st.who, st.hero);
-    else if (SAFE_PAIR[st.type]) link(SAFE_PAIR[st.type], st.who, S);
   }
   const linked = [];
   for (let a = 0; a < pieces; a++) for (let b = 0; b < pieces; b++) if (a !== b && links[a * pieces + b].length) linked.push([a, b]);

@@ -1,43 +1,49 @@
-// RULES.md §8 (v3, rows and columns) encoded in the puzzle JSON contract.
+// RULES.md §8 (v4, houses and map clues) encoded in the puzzle JSON contract (RULES.md §9).
 const grid = (rows, map) => rows.map(r => r.split(' ').map(x => map[x] ?? x));
-const T = { '.': 'ground', b: 'bush', p: 'pad', C: 'crate', B: 'barrel', R: 'rock' };
-const hero = (name, gender) => ({ name, gender });
+const T = {
+  '.': 'floor', b: 'bed', a: 'armchair', u: 'rug', T: 'table', W: 'wardrobe', P: 'plant',
+  ',': 'grass', k: 'bush', l: 'bench', D: 'tree', R: 'rock', S: 'pond',
+};
+const hero = (name, gen, gender) => ({ name, gen, gender });
 
 export const example1 = {
-  version: 3,
+  version: 4,
   n: 4,
-  cells: grid(['R . . .', '. . . R', '. b . .', '. . b p'], T),
-  zones: grid(['R R R R', 'B R R R', 'B B B B', 'B B B B'], { R: 0, B: 1 }),
-  zoneNames: ['Ruiny', 'Baza'],
-  heroes: [hero('Bobo', 'm'), hero('Mira', 'f'), hero('Zyg', 'm')],
+  setting: 'domek',
+  cells: grid(['b . . W', '. P a .', '. u . .', 'T . . a'], T),
+  zones: grid(['Y Y S S', 'Y Y S S', 'Y S S S', 'Y S S S'], { Y: 0, S: 1 }),
+  zoneNames: ['Sypialnia', 'Salon'],
+  zoneKinds: ['in', 'in'],
+  heroes: [hero('Bobo', 'Bobo', 'm'), hero('Mira', 'Miry', 'f'), hero('Zyg', 'Zyga', 'm')],
   statements: [
-    { type: 'on', cellType: 'pad', who: 0 },
-    { type: 'southOf', who: 2, hero: 1 },
-    { type: 'northOfSafe', who: 2 },
+    { type: 'onlyOn', cellType: 'armchair', who: 1 },
+    { type: 'on', cellType: 'bed', who: 2 },
   ],
-  // Bobo (4,4), Mira (1,2), Zyg (2,1); safe (3,3)
-  safe: 10,
-  solution: [15, 1, 4],
-  thief: 0,
-  bareSolutions: 126,
+  // Bobo (4,2), Mira (2,3), Zyg (1,1); safe (3,4)
+  safe: 11,
+  solution: [13, 6, 0],
+  thief: 1,
+  bareSolutions: 78,
 };
 
 export const example2 = {
-  version: 3,
+  version: 4,
   n: 5,
-  cells: grid(['. R . p .', 'C b . . .', '. . C b .', 'b . . . .', '. . . C .'], T),
-  zones: grid(['B B K K O', 'B B B K O', 'B B B K O', 'B K K K O', 'K K O O O'], { B: 0, O: 1, K: 2 }),
-  zoneNames: ['Baza', 'Oaza', 'Kanion'],
-  heroes: [hero('Bobo', 'm'), hero('Mira', 'f'), hero('Zyg', 'm'), hero('Kora', 'f')],
+  setting: 'domek',
+  cells: grid(['. . W , ,', 'T . . k ,', '. a . , D', 'b . . P l', '. . u . .'], T),
+  zones: grid(['K K K O O', 'K K K O O', 'S S S O O', 'Y Y S S O', 'Y Y S S S'], { K: 0, O: 1, S: 2, Y: 3 }),
+  zoneNames: ['Kuchnia', 'Ogród', 'Salon', 'Sypialnia'],
+  zoneKinds: ['in', 'out', 'in', 'in'],
+  heroes: [hero('Bobo', 'Bobo', 'm'), hero('Mira', 'Miry', 'f'), hero('Zyg', 'Zyga', 'm'), hero('Kora', 'Kory', 'f')],
   statements: [
-    { type: 'nextTo', cellType: 'rock', who: 0 },
-    { type: 'on', cellType: 'bush', who: 2 },
-    { type: 'otherZone', who: 1, hero: 2 },
-    { type: 'northOf', who: 3, hero: 0 },
+    { type: 'onlyOn', cellType: 'bush', who: 0 },
+    { type: 'nextTo', cellType: 'bed', who: 1 },
+    { type: 'aloneIn', zone: 2, who: 3 },
+    { type: 'on', cellType: 'armchair', who: 3 },
   ],
-  // Bobo (2,2), Mira (5,5), Zyg (3,4), Kora (1,1); safe (4,3)
+  // Bobo (2,4), Mira (5,1), Zyg (1,5), Kora (3,2); safe (4,3)
   safe: 17,
-  solution: [6, 24, 13, 0],
-  thief: 2,
-  bareSolutions: 1104,
+  solution: [8, 20, 4, 11],
+  thief: 3,
+  bareSolutions: 1392,
 };

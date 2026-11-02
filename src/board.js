@@ -1,8 +1,32 @@
 // Board geometry derived from a puzzle (RULES.md §1–§3). Cell index = r * n + c.
 // Nothing blocks sight: two cells see each other when they share a row or a column. Zone borders only
 // limit neighbourhood and thief spots. The safe is not on the map; `safeOf` derives it from a placement.
-export const WALKABLE_TYPES = ['ground', 'bush', 'pad'];
-export const OBSTACLE_TYPES = ['crate', 'barrel', 'rock'];
+
+// Cell catalogue (RULES.md §1). `kind` is a generator convention: indoor types in rooms, outdoor in outdoor zones.
+export const CELL_TYPES = {
+  floor: { kind: 'in', walk: true, plain: true },
+  bed: { kind: 'in', walk: true },
+  armchair: { kind: 'in', walk: true },
+  rug: { kind: 'in', walk: true },
+  table: { kind: 'in' },
+  wardrobe: { kind: 'in' },
+  plant: { kind: 'in' },
+  grass: { kind: 'out', walk: true, plain: true },
+  bush: { kind: 'out', walk: true },
+  bench: { kind: 'out', walk: true },
+  tree: { kind: 'out' },
+  rock: { kind: 'out' },
+  pond: { kind: 'out' },
+};
+const typesWhere = test => Object.keys(CELL_TYPES).filter(t => test(CELL_TYPES[t]));
+export const WALKABLE_TYPES = typesWhere(d => d.walk);
+export const PLAIN_TYPES = typesWhere(d => d.plain);
+// Walkable and not plain: the parameters of `notOn`, `onlyOn`, `nobodyOn`.
+export const SPECIAL_TYPES = typesWhere(d => d.walk && !d.plain);
+export const OBSTACLE_TYPES = typesWhere(d => !d.walk);
+// The parameters of `nextTo` / `notNextTo`.
+export const NON_PLAIN_TYPES = typesWhere(d => !d.plain);
+export const isPlain = t => PLAIN_TYPES.includes(t);
 
 const DIRS = [[-1, 0], [1, 0], [0, -1], [0, 1]];
 const DIAGONALS = [[-1, -1], [-1, 1], [1, -1], [1, 1]];
@@ -36,7 +60,6 @@ function buildBoard(puzzle) {
   const inside = (r, c) => r >= 0 && c >= 0 && r < n && c < n;
   const neighbours = [];
   const nextTypes = [];
-  const lineTypes = [];
   const thiefSpots = [];
   for (let i = 0; i < size; i++) {
     const r = Math.floor(i / n), c = i % n;
@@ -47,10 +70,6 @@ function buildBoard(puzzle) {
     }
     neighbours.push(nb);
     nextTypes.push(new Set(nb.map(j => type[j])));
-    // Types in the cell's row and column (`sees`, RULES.md §5).
-    const line = new Set();
-    for (let x = 0; x < n; x++) line.add(type[r * n + x]).add(type[x * n + c]);
-    lineTypes.push(line);
     const spots = [];
     for (const [dr, dc] of DIAGONALS) {
       const j = (r + dr) * n + c + dc;
@@ -64,7 +83,7 @@ function buildBoard(puzzle) {
 
   return {
     zonesRef: puzzle.zones,
-    n, size, type, zone, walk, walkCells, neighbours, nextTypes, lineTypes, thiefSpots, zoneCells,
+    n, size, type, zone, walk, walkCells, neighbours, nextTypes, thiefSpots, zoneCells,
     row: i => Math.floor(i / n) + 1,
     col: i => (i % n) + 1,
   };

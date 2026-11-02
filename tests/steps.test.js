@@ -1,4 +1,4 @@
-// Step solver (rules v3, PLAN.md stage 9): never eliminates a cell of any real solution (heroes and the safe),
+// Step solver (rules v4, PLAN.md stages 9 and 10): never eliminates a cell of any real solution (heroes and the safe),
 // reports a contradiction only when there is no solution, solves every generated puzzle, hints lead to the
 // solution one hero at a time, drone reports are true.
 import { test } from 'node:test';
@@ -12,6 +12,8 @@ import { refSolve } from './reference.js';
 import { randomBoardPuzzle, randomStatement, randomValidPlacement, refSolveWith, LARGE } from './helpers.js';
 
 const BAD_TEXT = /undefined|NaN/;
+// Techniques seen in the soundness runs: the composite technique (onlyOn / aloneIn / nobodyOn) must be exercised.
+const techs = {};
 
 // `solutions` = the reference solutions consistent with the facts. Returns the outcome class.
 function assertSound(puzzle, solutions, result, at) {
@@ -31,7 +33,10 @@ function assertSound(puzzle, solutions, result, at) {
     assert.deepEqual(result.placement, solutions[0], at);
     assert.equal(result.safe, safeOf(board, solutions[0]), at);
   }
-  for (const s of result.steps) assert.doesNotMatch(stepText(puzzle, s), BAD_TEXT, at);
+  for (const s of result.steps) {
+    techs[s.tech] = (techs[s.tech] ?? 0) + 1;
+    assert.doesNotMatch(stepText(puzzle, s), BAD_TEXT, at);
+  }
   return result.solved ? 'solved' : 'open';
 }
 
@@ -75,6 +80,7 @@ test('step solver with facts keeps every solution consistent with them (heroes a
     assertSound(p, consistent, stepSolve(p, { facts: given }), `board ${seed}`);
   }
   assert.ok(facts > 300);
+  assert.ok(techs.composite > 20, `composite steps: ${techs.composite}; all techniques ${JSON.stringify(techs)}`);
 });
 
 // Hints place one hero at a time; the safe is never a target (it appears by itself).
